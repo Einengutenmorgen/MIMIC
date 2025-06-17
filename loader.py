@@ -183,7 +183,6 @@ def load_orginal(file_path, tweet_id):
         return []
 
     try:
-        original_tweet = None
         with open(file_path, 'r', encoding='utf-8') as file:
             # Read all lines from the file
             lines = file.readlines()
@@ -202,6 +201,8 @@ def load_orginal(file_path, tweet_id):
             # Extract predictions for the specified run_id
             holdout_tweets = data.get('tweets')
             for tweet in holdout_tweets:
+
+                original_tweet = None
                 if tweet.get('tweet_id') == tweet_id:
                     original_tweet = tweet.get('full_text')
                 if original_tweet is not None:
@@ -243,8 +244,77 @@ def load_predictions_orginales_formated(run_id, file_path):
             logger.error(f"No original tweet found for tweet_id {tweet_id}")
             
     #return formatted_orginals, formatted_predictions
-    return predictions      
+    return predictions
 
+
+def load_results_for_reflection(run_id, file_path):
+    """
+    Load results for reflection based on run_id.
+    
+    :param run_id: Run ID to filter the results.
+    :param file_path: Path to the JSONL file containing the user data.
+    :return: List of formatted predictions, orginals and eval results for the specified run_id.
+    """
+    if not os.path.exists(file_path):
+        logger.error(f"File not found: {file_path}")
+        return None
+    
+    try:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            lines = file.readlines()
+            if len(lines) < 4:
+                logger.error(f"File {file_path} has fewer than 4 lines")
+                return None
+            try:
+                data = json.loads(lines[3].strip())
+            
+            except json.JSONDecodeError as e:
+                logger.error(f"Error decoding JSON from line 3 in {file_path}: {e}")
+                return []
+           
+        
+        # Get user_id
+        user_id = data.get('user_id')
+        
+        
+        # Find the specific run
+        runs = data.get('runs', [])
+        target_run = None
+        for run in runs:
+            if run.get('run_id') == run_id:
+                target_run = run
+                break
+        
+        if not target_run:
+            logger.error(f"Run ID {run_id} not found")
+            return None
+        
+        # Find the evaluation for this run
+        evaluations = data.get('evaluations', [])
+        target_evaluation = None
+        for evaluation in evaluations:
+            if evaluation.get('run_id') == run_id:
+                target_evaluation = evaluation
+                break
+        
+        if not target_evaluation:
+            logger.error(f"Evaluation for run ID {run_id} not found")
+            return None
+        
+        return {
+            'user_id': user_id,
+            'run_id': run_id,
+            'persona': target_run.get('persona', ''),
+            'evaluation_results': target_evaluation.get('evaluation_results', {}),
+            'timestamp': target_evaluation.get('timestamp', '')
+        }
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Error decoding JSON: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error loading data: {e}")
+        return None
 
 
 if __name__ == "__main__":
