@@ -253,7 +253,8 @@ def load_results_for_reflection(run_id, file_path):
     
     :param run_id: Run ID to filter the results.
     :param file_path: Path to the JSONL file containing the user data.
-    :return: List of formatted predictions, orginals and eval results for the specified run_id.
+    :return: Dictionary with user_id, run_id, persona, timestamp, best_preds, original of best_preds, 
+             worst_preds, original of worst_preds, bleu scores, rouge scores
     """
     if not os.path.exists(file_path):
         logger.error(f"File not found: {file_path}")
@@ -262,23 +263,30 @@ def load_results_for_reflection(run_id, file_path):
     try:
         with open(file_path, 'r', encoding='utf-8') as file:
             lines = file.readlines()
-            if len(lines) < 4:
-                logger.error(f"File {file_path} has fewer than 4 lines")
-                return None
-            try:
-                data = json.loads(lines[3].strip())
             
-            except json.JSONDecodeError as e:
-                logger.error(f"Error decoding JSON from line 3 in {file_path}: {e}")
-                return []
-           
+        if len(lines) < 4:
+            logger.error(f"File {file_path} has fewer than 4 lines")
+            return None
         
-        # Get user_id
-        user_id = data.get('user_id')
+        # Parse line 3 (index 2) for persona data
+        try:
+            persona_data = json.loads(lines[2].strip())
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding JSON from line 3 in {file_path}: {e}")
+            return None
         
+        # Parse line 4 (index 3) for evaluation data  
+        try:
+            eval_data = json.loads(lines[3].strip())
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding JSON from line 4 in {file_path}: {e}")
+            return None
         
-        # Find the specific run
-        runs = data.get('runs', [])
+        # Get user_id (should be in both, but let's prioritize eval_data)
+        user_id = eval_data.get('user_id') or persona_data.get('user_id')
+        
+        # Find the specific run in persona data
+        runs = persona_data.get('runs', [])
         target_run = None
         for run in runs:
             if run.get('run_id') == run_id:
@@ -286,11 +294,11 @@ def load_results_for_reflection(run_id, file_path):
                 break
         
         if not target_run:
-            logger.error(f"Run ID {run_id} not found")
+            logger.error(f"Run ID {run_id} not found in persona data")
             return None
         
         # Find the evaluation for this run
-        evaluations = data.get('evaluations', [])
+        evaluations = eval_data.get('evaluations', [])
         target_evaluation = None
         for evaluation in evaluations:
             if evaluation.get('run_id') == run_id:
@@ -301,19 +309,89 @@ def load_results_for_reflection(run_id, file_path):
             logger.error(f"Evaluation for run ID {run_id} not found")
             return None
         
+        # Extract evaluation results
+        eval_results = target_evaluation.get('evaluation_results', {})
+        overall = eval_results.get('overall', {})
+        best_predictions = eval_results.get('best_predictions', [])
+        worst_predictions = eval_results.get('worst_predictions', [])
+        
+        # Extract best predictions and their originals
+        best_preds = [pred.get('prediction', '') for pred in best_predictions]
+        best_originals = [pred.get('reference', '') for pred in best_predictions]
+        
+        # Extract worst predictions and their originals
+        worst_preds = [pred.get('prediction', '') for pred in worst_predictions]
+        worst_originals = [pred.get('reference', '') for pred in worst_predictions]
+        
         return {
             'user_id': user_id,
             'run_id': run_id,
             'persona': target_run.get('persona', ''),
-            'evaluation_results': target_evaluation.get('evaluation_results', {}),
-            'timestamp': target_evaluation.get('timestamp', '')
+            'timestamp': target_evaluation.get('timestamp', ''),
+            'best_preds': best_preds,
+            'best_originals': best_originals,
+            'worst_preds': worst_preds,
+            'worst_originals': worst_originals,
+            'bleu_scores': overall.get('bleu', {}),
+            'rouge_scores': overall.get('rouge', {})
         }
         
-    except json.JSONDecodeError as e:
-        logger.error(f"Error decoding JSON: {e}")
-        return None
     except Exception as e:
         logger.error(f"Error loading data: {e}")
+        return None
+    
+
+def load_latest_improved_persona(run_id, file_path):
+    """
+    Load the improved persona from the latest iteration for a given run_id.
+    
+    :param run_id: Run ID to filter the reflections.
+    :param file_path: Path to the JSONL file containing the reflections.
+    :return: String containing the improved persona from the latest iteration, or None if not found.
+    """
+    if not os.path.exists(file_path):
+        logger.error(f"File not found: {file_path}")
+        return None
+    
+    try:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            lines = file.readlines()
+            
+        # Check if file has at least 5 lines (reflections are on line 5, index 4)
+        if len(lines) < 5:
+            logger.error(f"File {file_path} has fewer than 5 lines")
+            return None
+        
+        # Parse line 5 (index 4) for reflection data
+        try:
+            reflections_data = json.loads(lines[4].strip())
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding JSON from line 5 in {file_path}: {e}")
+            return None
+        
+        # Filter reflections by run_id
+        reflections = reflections_data.get('reflections', [])
+        run_reflections = [r for r in reflections if r.get('run_id') == run_id]
+        
+        if not run_reflections:
+            logger.warning(f"No reflections found for run_id {run_id}")
+            return None
+        
+        # Find the reflection with the highest iteration number
+        latest_reflection = max(run_reflections, key=lambda x: x.get('iteration', 0))
+        
+        # Extract improved_persona
+        improved_persona = latest_reflection.get('reflection_results', {}).get('improved_persona', '')
+        
+        if improved_persona:
+            logger.info(f"Loaded improved persona from run_id {run_id}, iteration {latest_reflection.get('iteration')}")
+            return improved_persona
+        else:
+            logger.warning(f"No improved_persona found for run_id {run_id}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error loading improved persona: {e}")
         return None
 
 
