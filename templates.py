@@ -24,6 +24,23 @@ Tweet: {tweet}"""
     Gebe nur den maskierten Text zurück, ohne zusätzliche Erklärungen oder Formatierungen."""
 
     
+    reflect_results_template = """Untersuche die Qualität der Imitation, indem du den verwendeten Prompt und die Ergebnisse analsierst.
+    Prompt: {persona}
+    beste Imitation: {best_preds}
+    Orginal: {best_originals}
+
+    Schlechte Imitation: {worst_preds}
+    Orginal: {worst_originals}
+
+    durchschnittliche BLEU scores: {bleu_scores}
+    durchschnittliche ROUGE scores: {rouge_scores}
+
+    Antworte mit einer Reflection der Ergebnisse und einer verbessterten Version der Persona Beschreibung.
+
+    Produce JSON matching this specification:
+
+output = {{ "Reflection": string, "improved_persona": string }}
+Return: <output>"""
 
 
 
@@ -32,7 +49,8 @@ Tweet: {tweet}"""
         "persona_template_simple": persona_template_simple,
         "imitation_post_template_simple": imitation_post_template_simple,
         "imitation_replies_template_simple": imitation_replies_template_simple,
-        "mask_opion_template": mask_opion_template
+        "mask_opion_template": mask_opion_template,
+        "reflect_results_template": reflect_results_template
     }
     
     if template_name in templates:

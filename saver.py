@@ -191,3 +191,93 @@ def save_evaluation_results(file_path, evaluation_results, run_id):
         
     except Exception as e:
         logger.error(f"Error saving evaluation results to {file_path}: {e}")
+
+
+
+
+
+def save_reflection_results(file_path, reflections, run_id, iteration):
+    """
+    Save reflection on imitation results to a JSON file.
+    
+    :param file_path: Path to the JSON file
+    :param reflections: JSON string containing API call results
+    :param run_id: ID of the current run
+    :param iteration: Iteration number for this reflection
+    :return: None
+    """
+    if not os.path.exists(file_path):
+        logger.error(f"File not found: {file_path}")
+        return
+    
+    # Clean markdown code blocks
+    cleaned = reflections.strip()
+    if cleaned.startswith('```'):
+        start = cleaned.find('\n') + 1
+        end = cleaned.rfind('```')
+        if start > 0 and end > start:
+            cleaned = cleaned[start:end].strip()
+    
+    # Parse JSON
+    try:
+        data = json.loads(cleaned)
+        reflection_on_results = data['Reflection']
+        improved_persona = data['improved_persona']
+    except (json.JSONDecodeError, KeyError) as e:
+        logger.error(f"JSON error: {e}")
+        return
+    
+    # Read file
+    with open(file_path, 'r', encoding='utf-8') as file:
+        lines = file.readlines()
+    
+    # Load or create reflections data
+    reflections_line_index = 4
+    if len(lines) > reflections_line_index:
+        try:
+            reflections_data = json.loads(lines[reflections_line_index].strip())
+        except json.JSONDecodeError:
+            logger.error(f"Error decoding JSON from {file_path} at line {reflections_line_index}: {lines[reflections_line_index]}")
+            
+    else:
+        reflections_data = {"reflections": []}
+    
+    # Create new reflection
+    new_reflection = {
+        "run_id": run_id,
+        "iteration": iteration,
+        "reflection_results": {
+            "reflection_on_results": reflection_on_results,
+            "improved_persona": improved_persona
+        }
+    }
+    
+    # Check if run_id and iteration combination exists
+    existing_index = None
+    for i, entry in enumerate(reflections_data.get('reflections', [])):
+        if entry.get('run_id') == run_id and entry.get('iteration') == iteration:
+            existing_index = i
+            break
+    
+    # Add or update
+    if existing_index is not None:
+        reflections_data['reflections'][existing_index] = new_reflection
+        logger.warning(f"Overwriting existing reflection for run_id: {run_id}, iteration: {iteration}")
+    else:
+        if 'reflections' not in reflections_data:
+            reflections_data['reflections'] = []
+        reflections_data['reflections'].append(new_reflection)
+        logger.info(f"Added new reflection for run_id: {run_id}, iteration: {iteration}")
+    
+    # Write back
+    lines_to_write = lines[:reflections_line_index]
+    while len(lines_to_write) < reflections_line_index:
+        lines_to_write.append("\n")
+    lines_to_write.append(json.dumps(reflections_data, ensure_ascii=False) + "\n")
+    if len(lines) > reflections_line_index + 1:
+        lines_to_write.extend(lines[reflections_line_index + 1:])
+    
+    with open(file_path, 'w', encoding='utf-8') as file:
+        file.writelines(lines_to_write)
+    
+    logger.info(f"Reflection results saved to {file_path}")
