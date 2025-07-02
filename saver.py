@@ -4,6 +4,20 @@ from logging_config import logger
 import pandas as pd
 import pathlib
 
+#helper
+def numpy_json_handler(obj):
+    """Convert numpy objects to Python native types for JSON serialization"""
+    if isinstance(obj, (np.integer, np.int32, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif hasattr(obj, 'item'):  # numpy scalars
+        return obj.item()
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+
 #def save user imitation 
 
 # def save_user_imitation(file_path, stimulus, persona, imitation, run_id, tweet_id):
@@ -196,12 +210,12 @@ def save_evaluation_results(file_path, evaluation_results, run_id):
 
 
 
-def save_reflection_results(file_path, reflections, run_id, iteration):
+def save_reflection_results(file_path: str, reflections: dict, run_id: str, iteration: int):
     """
     Save reflection on imitation results to a JSON file.
     
     :param file_path: Path to the JSON file
-    :param reflections: JSON string containing API call results
+    :param reflections: Dictionary containing API call results (e.g., {'Reflection': '...', 'improved_persona': '...'})
     :param run_id: ID of the current run
     :param iteration: Iteration number for this reflection
     :return: None
@@ -211,20 +225,21 @@ def save_reflection_results(file_path, reflections, run_id, iteration):
         return
     
     # Clean markdown code blocks
-    cleaned = reflections.strip()
-    if cleaned.startswith('```'):
-        start = cleaned.find('\n') + 1
-        end = cleaned.rfind('```')
-        if start > 0 and end > start:
-            cleaned = cleaned[start:end].strip()
+    # cleaned = reflections.strip()
+    # if cleaned.startswith('```'):
+    #     start = cleaned.find('\n') + 1
+    #     end = cleaned.rfind('```')
+    #     if start > 0 and end > start:
+    #         cleaned = cleaned[start:end].strip()
     
     # Parse JSON
     try:
-        data = json.loads(cleaned)
-        reflection_on_results = data['Reflection']
-        improved_persona = data['improved_persona']
-    except (json.JSONDecodeError, KeyError) as e:
-        logger.error(f"JSON error: {e}")
+        # reflections is already a dictionary, as per debugging analysis.
+        # Original line: data = json.loads(reflections)
+        reflection_on_results = reflections['Reflection']
+        improved_persona = reflections['improved_persona']
+    except KeyError as e: # Changed to only catch KeyError as json.loads is removed
+        logger.error(f"Missing key in reflections dictionary: {e}")
         return
     
     # Read file
@@ -273,7 +288,7 @@ def save_reflection_results(file_path, reflections, run_id, iteration):
     lines_to_write = lines[:reflections_line_index]
     while len(lines_to_write) < reflections_line_index:
         lines_to_write.append("\n")
-    lines_to_write.append(json.dumps(reflections_data, ensure_ascii=False) + "\n")
+    lines_to_write.append(json.dumps(reflections_data, ensure_ascii=False, default=numpy_json_handler) + "\n")
     if len(lines) > reflections_line_index + 1:
         lines_to_write.extend(lines[reflections_line_index + 1:])
     

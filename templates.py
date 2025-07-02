@@ -1,41 +1,63 @@
 def select_template(template_name):
 
     persona_template_simple= """
-"Erstelle ein genaues Nutzerprofil basierend auf Twitter posts des Nutzers:
+"Create an accurate user profile based on the user's Twitter posts:
 
 {historie}
 
-Verwende dabei folgende Form:
--[FEATURE_NAME]:: <<Beschreibung>>
--[FEATURE_NAME]:: <<Beschreibung>>
+Use the following format:
+-[FEATURE_NAME]:: <<Description>>
+-[FEATURE_NAME]:: <<Description>>
 ..."""
 
-    imitation_post_template_simple = """Basierend auf dem bereitgestellten Perona eines Twitterusers, vervollständige den folgenden Tweet:
-Perosna: {persona}
+    imitation_post_template_simple = """Based on the provided persona of a Twitter user, complete the following tweet:
+Persona: {persona}
 
     Tweet: {tweet}"""
 
-    imitation_replies_template_simple = """Basierend auf dem bereitgestellten Perona eines Twitterusers, antworte auf den folgenden Tweet:
-Perosna: {persona}
+    imitation_replies_template_simple = """Based on the provided persona of a Twitter user, reply to the following tweet:
+Persona: {persona}
 Tweet: {tweet}"""
 
-    mask_opion_template= """Ersetze alle meinungstragenden wörter in dem folgenden Text durch [MASKED]:
-    Text: {text}
-    Gebe nur den maskierten Text zurück, ohne zusätzliche Erklärungen oder Formatierungen."""
+    # Improved Template
+    mask_opinion_template = """
+CRITICAL REQUIREMENT: You MUST replace at least 1 word with [MASKED]!
 
-    
-    reflect_results_template = """Untersuche die Qualität der Imitation, indem du den verwendeten Prompt und die Ergebnisse analsierst.
+Task: Mask strongly opinionated and evaluative words in the following text with [MASKED].
+
+IMPORTANT RULES:
+1. AT LEAST 1 word MUST be masked - this is mandatory!
+2. Leave proper names unchanged (Biden, Trump, California, etc.)
+3. Leave neutral nouns unchanged (voters, election, people, etc.)
+4. Leave numbers and URLs unchanged
+5. Mask primarily: strongly evaluative adjectives, derogatory terms, emotional expressions
+6. If no obvious opinion words are present, mask the most subjective available word
+7. Return ONLY the masked text, no explanations
+8. NEVER respond with "I cannot" or "there are none"
+
+Examples:
+- "Biden is a great president" → "Biden is a [MASKED] president"  
+- "Trump is terrible" → "Trump is [MASKED]"
+- "California needs help" → "California needs [MASKED]" (if necessary)
+
+Text: {text}
+
+
+Masked text (with at least 1 [MASKED]):"""
+
+
+    reflect_results_template = """Examine the quality of the imitation by analyzing the used prompt and the results.
     Prompt: {persona}
-    beste Imitation: {best_preds}
-    Orginal: {best_originals}
+    Best imitation: {best_preds}
+    Original: {best_originals}
 
-    Schlechte Imitation: {worst_preds}
-    Orginal: {worst_originals}
+    Poor imitation: {worst_preds}
+    Original: {worst_originals}
 
-    durchschnittliche BLEU scores: {bleu_scores}
-    durchschnittliche ROUGE scores: {rouge_scores}
+    Average BLEU scores: {bleu_scores}
+    Average ROUGE scores: {rouge_scores}
 
-    Antworte mit einer Reflection der Ergebnisse und einer verbessterten Version der Persona Beschreibung.
+    Respond with a reflection of the results and an improved version of the persona description.
 
     Produce JSON matching this specification:
 
@@ -49,7 +71,7 @@ Return: <output>"""
         "persona_template_simple": persona_template_simple,
         "imitation_post_template_simple": imitation_post_template_simple,
         "imitation_replies_template_simple": imitation_replies_template_simple,
-        "mask_opion_template": mask_opion_template,
+        "mask_opinion_template": mask_opinion_template,
         "reflect_results_template": reflect_results_template
     }
     
