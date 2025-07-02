@@ -1,5 +1,5 @@
 /.env
-/data/raw
+/data/
 /logs
 /venv
 /__pycache__

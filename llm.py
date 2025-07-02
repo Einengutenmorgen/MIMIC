@@ -1,6 +1,7 @@
 import os
 from openai import OpenAI
 from google import genai
+import ollama
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -38,4 +39,34 @@ def call_ai(template, model="openai"):
             contents=template
         )
         return response.text
-    raise ValueError("Use 'openai' or 'google'")
+    
+
+    if model == "google_json":
+        response = gemini_client.models.generate_content(
+            model='gemini-2.5-flash-preview-05-20',
+            contents=template,
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": {
+                    "type": "object",
+                    "properties": {
+                        "Reflection": {
+                            "type": "string"
+                        },
+                        "improved_persona": {
+                            "type": "string"
+                        }
+                    },
+                    "required": ["Reflection", "improved_persona"]
+                }
+            }
+        )
+        import json
+        return json.loads(response.text)
+    if model == "ollama":
+        response = ollama.generate(
+            model='phi4:latest',
+            prompt=template
+        )
+        return response['response']
+    raise ValueError("Use 'openai', 'google', 'google_json' or 'ollama'")

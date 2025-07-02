@@ -1,0 +1,24 @@
+experiment:
+  run_name_prefix: None # None für Datumscode als Experimentnamen
+  users_dict: "C:/Users/Christoph.Hau/Experimente/ha/data/filtered_users" 
+  number_of_users: 1 #None to process all
+  number_of_rounds: 3 # How often the modell reflects on its results
+  num_stimuli_to_process: 3  # Anzahl der Stimuli, die pro Iterration verarbeitet werden sollen, None für alle
+
+  #async settings
+  #use async: true 
+  #num_workers: 4   # Number of user files to process in parallel.
+
+
+
+llm:
+  persona_model: "google" # Modell für die Persona-Generierung
+  imitation_model: "ollama" # Modell für die Imitations-Generierung
+  reflection_model: "google_json" # Modell für die Reflexions-Generierung
+
+templates:
+  persona_template: "persona_template_simple"
+  imitation_post_template: "imitation_post_template_simple"
+  imitation_reply_template: "imitation_replies_template_simple"
+  reflection_template: "reflect_results_template"
+
