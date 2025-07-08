@@ -9,6 +9,66 @@ from eval import evaluate, evaluate_with_individual_scores
 from utils import load_config
 import random
 import concurrent.futures
+import threading
+
+
+# Thread lock for file operations to ensure thread safety
+file_lock = threading.Lock()
+
+
+def process_single_stimulus(stimulus_data, persona, config, user_file_path, run_id):
+    """
+    Process a single stimulus in parallel.
+    
+    :param stimulus_data: Tuple of (stimulus, is_post, post_id)
+    :param persona: User persona
+    :param config: Configuration dictionary
+    :param user_file_path: Path to user file
+    :param run_id: Current run ID
+    :return: Success status
+    """
+    stimulus, is_post, post_id = stimulus_data
+    template_config = config.get('templates', {})
+    llm_config = config.get('llm', {})
+    
+    try:
+        logger.debug(f"Processing stimulus {post_id}: {stimulus}, is_post: {is_post}")
+        
+        # Format the stimulus template
+        if is_post:
+            stimulus_formatted = templates.format_template(
+                template_config.get('imitation_post_template', 'imitation_post_template_simple'),
+                persona=persona,
+                tweet=stimulus
+            )
+        else:
+            stimulus_formatted = templates.format_template(
+                template_config.get('imitation_reply_template', 'imitation_replies_template_simple'),
+                persona=persona,
+                tweet=stimulus
+            )
+        
+        # Call AI model
+        imitation_model = llm_config.get('imitation_model', 'ollama')
+        imitation = call_ai(stimulus_formatted, imitation_model)
+        logger.debug(f"Imitation for post/reply {post_id}:\n{imitation}")
+        
+        # Save results with thread safety
+        with file_lock:
+            save_user_imitation(
+                file_path=user_file_path,
+                stimulus=stimulus,
+                persona=persona,
+                imitation=imitation,
+                run_id=run_id,
+                tweet_id=post_id
+            )
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error processing stimulus {post_id}: {e}")
+        return False
 
 
 def process_user(user_file_path, config, run_id):
@@ -43,36 +103,33 @@ def process_user(user_file_path, config, run_id):
         logger.info(f"Starting imitation generation for {user_file}...")
         all_stimuli = loader.load_stimulus(user_file_path)
 
-        # Innere Schleife: Iteration über Stimuli
-        for i, x in enumerate(all_stimuli[:num_stimuli_to_process]):
-            stimulus, is_post, post_id = x
-            logger.debug(f"Processing Stimulus {i+1}/{num_stimuli_to_process}: {stimulus}, is_post: {is_post}, post_id: {post_id}")
-
-            if is_post:
-                stimulus_formatted = templates.format_template(
-                    template_config.get('imitation_post_template', 'imitation_post_template_simple'),
-                    persona=persona,
-                    tweet=stimulus
-                )
-            else:
-                stimulus_formatted = templates.format_template(
-                    template_config.get('imitation_reply_template', 'imitation_replies_template_simple'),
-                    persona=persona,
-                    tweet=stimulus
-                )
-
-            imitation_model = llm_config.get('imitation_model', 'ollama')
-            imitation = call_ai(stimulus_formatted, imitation_model)
-            logger.debug(f"Imitation for post/reply {post_id}:\n{imitation}")
-
-            save_user_imitation(
-                file_path=user_file_path,
-                stimulus=stimulus,
-                persona=persona,
-                imitation=imitation,
-                run_id=run_id,
-                tweet_id=post_id
-            )
+        # Parallel processing of stimuli using ThreadPoolExecutor
+        stimuli_to_process = all_stimuli[:num_stimuli_to_process]
+        logger.info(f"Processing {len(stimuli_to_process)} stimuli in parallel with up to 4 threads...")
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            # Submit all stimuli for parallel processing
+            future_to_stimulus = {
+                executor.submit(process_single_stimulus, stimulus_data, persona, config, user_file_path, run_id): stimulus_data
+                for stimulus_data in stimuli_to_process
+            }
+            
+            # Wait for all tasks to complete and handle results
+            successful_count = 0
+            for future in concurrent.futures.as_completed(future_to_stimulus):
+                stimulus_data = future_to_stimulus[future]
+                _, _, post_id = stimulus_data
+                try:
+                    result = future.result()
+                    if result:
+                        successful_count += 1
+                        logger.debug(f"Successfully processed stimulus {post_id}")
+                    else:
+                        logger.warning(f"Failed to process stimulus {post_id}")
+                except Exception as exc:
+                    logger.error(f"Stimulus {post_id} generated an exception: {exc}")
+            
+            logger.info(f"Completed parallel processing: {successful_count}/{len(stimuli_to_process)} stimuli processed successfully")
 
         # --- Evaluation ---
         logger.info(f"Starting evaluation for {user_file}...")
