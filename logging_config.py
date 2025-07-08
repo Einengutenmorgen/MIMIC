@@ -17,7 +17,7 @@ logger.setLevel(logging.INFO)
 
 # Create file handler with UTF-8 encoding
 f_handler = logging.FileHandler('logs/app.log', encoding='utf-8')
-f_handler.setLevel(logging.INFO)
+f_handler.setLevel(logging.DEBUG)
 
 # Optional: console handler
 console_handler = logging.StreamHandler(sys.stdout)

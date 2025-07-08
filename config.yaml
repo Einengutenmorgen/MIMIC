@@ -1,13 +1,13 @@
 experiment:
   run_name_prefix: None # None für Datumscode als Experimentnamen
   users_dict: "C:/Users/Christoph.Hau/Experimente/ha/data/filtered_users" 
-  number_of_users: 1 #None to process all
+  number_of_users: 3 #None to process all
   number_of_rounds: 3 # How often the modell reflects on its results
   num_stimuli_to_process: 3  # Anzahl der Stimuli, die pro Iterration verarbeitet werden sollen, None für alle
 
   #async settings
-  #use async: true 
-  #num_workers: 4   # Number of user files to process in parallel.
+  use async: true 
+  num_workers: 1   # Number of user files to process in parallel.
 
 
 
