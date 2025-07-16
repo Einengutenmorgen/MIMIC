@@ -6,6 +6,7 @@ import pandas as pd
 import math
 
 from masking import mask_text
+from file_cache import get_file_cache
 
 
 def load_user_history(file_path):
@@ -15,29 +16,30 @@ def load_user_history(file_path):
     :param file_path: Path to the JSON file containing user history.
     :return: Dictionary containing user history data.
     """
-    if not os.path.exists(file_path):
-        logger.error(f"File not found: {file_path}")
+    cache = get_file_cache()
+    
+    # Use cached data to avoid repeated file reads
+    cached_data = cache.read_file_with_cache(file_path)
+    if cached_data is None:
         return {}
-
-    with open(file_path, 'r', encoding='utf-8') as file:
-        try:
-            data = pd.read_json(path_or_buf=file_path, lines=True, nrows=1)
-            histories=data.iloc[0].to_dict()
-            #print(histories)
-            #data= json.load(file)
-            if data.empty:
-                logger.warning(f"File {file_path} is empty")
-                return {}
-            logger.info(f"User history loaded from {file_path}")
-            #histories = data.get('histories', {})
-            if not isinstance(histories, dict):
-                logger.warning(f"Invalid format in {file_path}, expected a dictionary for 'histories'.")
-                #print(f"Invalid format in {file_path}, expected a dictionary for 'histories'.")
-                return {}
-            return histories
-        except json.JSONDecodeError as e:
-            logger.error(f"Error decoding JSON from {file_path}: {e}")
-            return {}
+    
+    # Get first line (index 0) data
+    if 0 not in cached_data:
+        logger.warning(f"File {file_path} is empty")
+        return {}
+    
+    histories = cached_data[0]
+    if histories is None:
+        logger.error(f"Error parsing JSON from {file_path}")
+        return {}
+    
+    logger.info(f"User history loaded from {file_path}")
+    
+    if not isinstance(histories, dict):
+        logger.warning(f"Invalid format in {file_path}, expected a dictionary for 'histories'.")
+        return {}
+    
+    return histories
 
 def get_formatted_user_historie(file_path):
     """
@@ -80,51 +82,54 @@ def load_stimulus(file_path):
     :param file_path: Path to the JSON file containing user history.
     :return: a list of tuples containing formatted stimulus, whether it is a post or reply, and the tweet ID.
     """
-    if not os.path.exists(file_path):
-        logger.error(f"File not found: {file_path}")
-        return {}
-
-    with open(file_path, 'r', encoding='utf-8') as file:
-        try:
-            data = pd.read_json(path_or_buf=file_path, lines=True, nrows=2)
-            user_holdout=data.iloc[1].to_dict()
-            
-            if data.empty:
-                logger.warning(f"File {file_path} is empty")
-                return {}
-            logger.info(f"User stimulus loaded from {file_path}")
-            all_stimuli = []
-            #check if it is a post or a reply
-            user_holdout_tweets = user_holdout.get('tweets')
-            for stimulus in user_holdout_tweets:
-                post_id = stimulus.get('tweet_id') 
-                if stimulus.get('reply_to_id') is None and stimulus.get('previous_message') is None:
-                    is_post = True
-                    logger.info(f"Stimulus is a post: {stimulus.get('full_text')}")
+    cache = get_file_cache()
+    
+    # Use cached data to avoid repeated file reads
+    cached_data = cache.read_file_with_cache(file_path)
+    if cached_data is None:
+        return []
+    
+    # Get line 2 (index 1) data
+    if 1 not in cached_data:
+        logger.warning(f"File {file_path} has fewer than 2 lines")
+        return []
+    
+    user_holdout = cached_data[1]
+    if user_holdout is None:
+        logger.error(f"Error parsing JSON from line 2 in {file_path}")
+        return []
+    
+    logger.info(f"User stimulus loaded from {file_path}")
+    all_stimuli = []
+    
+    # Check if it is a post or a reply
+    user_holdout_tweets = user_holdout.get('tweets', [])
+    for stimulus in user_holdout_tweets:
+        post_id = stimulus.get('tweet_id')
+        if stimulus.get('reply_to_id') is None and stimulus.get('previous_message') is None:
+            is_post = True
+            logger.info(f"Stimulus is a post: {stimulus.get('full_text')}")
+        else:
+            is_post = False
+        
+        if is_post:
+            stimulus_post = f"{stimulus.get('full_text')}"
+            try:
+                stimulus_post = mask_text(stimulus_post)
+                if stimulus_post:
+                    logger.info(f"Stimulus is a post: {stimulus_post}")
                 else:
-                    is_post = False
-            
-            
-                if is_post:
-                    stimulus_post = f"{stimulus.get('full_text')}"
-                    try:
-                        stimulus_post = mask_text(stimulus_post)
-                        if stimulus_post:
-                            logger.info(f"Stimulus is a post: {stimulus_post}")
-                        else:
-                            logger.error("No valid post text found in the stimulus.")
-                    except Exception as e:
-                        logger.error(f"Error masking post text: {e}")
-                        stimulus_post = "Post text could not be processed."
-                    stimulus_formatted = f"Post: {stimulus_post}"
-                else:
-                    reply_stimulus =  stimulus.get('previous_message')
-                    stimulus_formatted = f"Previous message: {reply_stimulus}"
-                all_stimuli.append((stimulus_formatted, is_post, post_id))
-            return all_stimuli 
-        except json.JSONDecodeError as e:
-            logger.error(f"Error decoding JSON from {file_path}: {e}")
-            return {}
+                    logger.error("No valid post text found in the stimulus.")
+            except Exception as e:
+                logger.error(f"Error masking post text: {e}")
+                stimulus_post = "Post text could not be processed."
+            stimulus_formatted = f"Post: {stimulus_post}"
+        else:
+            reply_stimulus = stimulus.get('previous_message')
+            stimulus_formatted = f"Previous message: {reply_stimulus}"
+        all_stimuli.append((stimulus_formatted, is_post, post_id))
+    
+    return all_stimuli
         
 def load_predictions(run_id, file_path):
     """
@@ -135,82 +140,70 @@ def load_predictions(run_id, file_path):
     :param file_path: Path to the JSONL file containing user history.
     :return: List of predictions for the specified run_id.
     """
-    if not os.path.exists(file_path):
-        logger.error(f"File not found: {file_path}")
+    cache = get_file_cache()
+    
+    # Use cached data to avoid repeated file reads
+    cached_data = cache.read_file_with_cache(file_path)
+    if cached_data is None:
         return []
-
-    try:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            lines = file.readlines()
-            
-            # Check if file has at least 3 lines
-            if len(lines) < 3:
-                logger.error(f"File {file_path} has fewer than 3 lines")
-                return []
-            
-            # Parse line 3 (index 2)
-            try:
-                data = json.loads(lines[2].strip())
-            except json.JSONDecodeError as e:
-                logger.error(f"Error decoding JSON from line 3 in {file_path}: {e}")
-                return []
-            
-            # Extract predictions for the specified run_id
-            if 'runs' not in data or not isinstance(data['runs'], list):
-                logger.warning(f"No valid 'runs' found in line 3 of {file_path}")
-                return []
-            
-            predictions = []
-            for run in data['runs']:
-                if run.get('run_id') == run_id:
-                    predictions.extend(run.get('imitations'))
-            
-            return predictions
-            
-    except IOError as e:
-        logger.error(f"Error reading file {file_path}: {e}")
+    
+    # Check if file has at least 3 lines (line 3 is index 2)
+    if 2 not in cached_data:
+        logger.error(f"File {file_path} has fewer than 3 lines")
         return []
+    
+    # Get line 3 (index 2) data
+    line_2_data = cached_data[2]
+    if line_2_data is None:
+        logger.error(f"Failed to parse line 3 in {file_path}")
+        return []
+    
+    # Extract predictions for the specified run_id
+    if 'runs' not in line_2_data or not isinstance(line_2_data['runs'], list):
+        logger.warning(f"No valid 'runs' found in line 3 of {file_path}")
+        return []
+    
+    predictions = []
+    for run in line_2_data['runs']:
+        if run.get('run_id') == run_id:
+            predictions.extend(run.get('imitations', []))
+    
+    return predictions
 
 def load_orginal(file_path, tweet_id):
     """
     Load original tweets from a predefined file path.
     based on a given Tweet-id
-    :return: List of original tweets.
+    :return: Original tweet text or None if not found.
     """
-
-    if not os.path.exists(file_path):
-        logger.error(f"File not found: {file_path}")
-        return []
-
-    try:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            # Read all lines from the file
-            lines = file.readlines()
-            # Check if file has at least 3 lines
-            if len(lines) < 3:
-                logger.error(f"File {file_path} has fewer than 3 lines")
-                return []
-            # Parse line 2 (index 1)
-            try:
-                data = json.loads(lines[1].strip())
-            
-            except json.JSONDecodeError as e:
-                logger.error(f"Error decoding JSON from line 3 in {file_path}: {e}")
-                return []
-            
-            # Extract predictions for the specified run_id
-            holdout_tweets = data.get('tweets')
-            for tweet in holdout_tweets:
-
-                original_tweet = None
-                if tweet.get('tweet_id') == tweet_id:
-                    original_tweet = tweet.get('full_text')
-                if original_tweet is not None:
-                    return original_tweet
-
-    except IOError as e:
-        logger.error(f"Error reading file {file_path}: {e}")
+    cache = get_file_cache()
+    
+    # Use cached data to avoid repeated file reads
+    cached_data = cache.read_file_with_cache(file_path)
+    if cached_data is None:
         return None
+    
+    # Check if file has at least 3 lines (line 2 is index 1)
+    if 1 not in cached_data:
+        logger.error(f"File {file_path} has fewer than 2 lines")
+        return None
+    
+    # Get line 2 (index 1) data
+    line_1_data = cached_data[1]
+    if line_1_data is None:
+        logger.error(f"Failed to parse line 2 in {file_path}")
+        return None
+    
+    # Extract tweets and find the one with matching tweet_id
+    holdout_tweets = line_1_data.get('tweets', [])
+    for tweet in holdout_tweets:
+        if tweet.get('tweet_id') == tweet_id:
+            original_tweet = tweet.get('full_text')
+            if original_tweet is not None:
+                return original_tweet
+    
+    # Tweet not found
+    return None
     
 def load_predictions_orginales_formated(run_id, file_path):
     """
@@ -223,27 +216,19 @@ def load_predictions_orginales_formated(run_id, file_path):
     predictions = load_predictions(run_id, file_path)
     if not predictions:
         logger.error(f"No predictions found for run_id {run_id} in {file_path}")
+        return []
     
-    for prediction in predictions:
-        tweet_id=prediction.get('tweet_id')
-        load_orginal(file_path, tweet_id)
-
-
-    formatted_predictions = []
-    formatted_orginals = []
+    # Process each prediction and add original tweet
+    # The caching in load_orginal() will prevent redundant file reads
     for prediction in predictions:
         tweet_id = prediction.get('tweet_id')
         original_tweet = load_orginal(file_path, tweet_id)
         if original_tweet:
-            # Append the formatted prediction with original tweet
+            # Add the original tweet to the prediction
             prediction['original'] = original_tweet
-            prediction_tweet = prediction.get('imitation')
-            formatted_predictions.append(prediction_tweet)
-            formatted_orginals.append(original_tweet)
         else:
             logger.error(f"No original tweet found for tweet_id {tweet_id}")
             
-    #return formatted_orginals, formatted_predictions
     return predictions
 
 
@@ -253,92 +238,86 @@ def load_results_for_reflection(run_id, file_path):
     
     :param run_id: Run ID to filter the results.
     :param file_path: Path to the JSONL file containing the user data.
-    :return: Dictionary with user_id, run_id, persona, timestamp, best_preds, original of best_preds, 
+    :return: Dictionary with user_id, run_id, persona, timestamp, best_preds, original of best_preds,
              worst_preds, original of worst_preds, bleu scores, rouge scores
     """
-    if not os.path.exists(file_path):
-        logger.error(f"File not found: {file_path}")
+    cache = get_file_cache()
+    
+    # Use cached data to avoid repeated file reads
+    cached_data = cache.read_file_with_cache(file_path)
+    if cached_data is None:
         return None
     
-    try:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            lines = file.readlines()
-            
-        if len(lines) < 4:
-            logger.error(f"File {file_path} has fewer than 4 lines")
-            return None
-        
-        # Parse line 3 (index 2) for persona data
-        try:
-            persona_data = json.loads(lines[2].strip())
-        except json.JSONDecodeError as e:
-            logger.error(f"Error decoding JSON from line 3 in {file_path}: {e}")
-            return None
-        
-        # Parse line 4 (index 3) for evaluation data  
-        try:
-            eval_data = json.loads(lines[3].strip())
-        except json.JSONDecodeError as e:
-            logger.error(f"Error decoding JSON from line 4 in {file_path}: {e}")
-            return None
-        
-        # Get user_id (should be in both, but let's prioritize eval_data)
-        user_id = eval_data.get('user_id') or persona_data.get('user_id')
-        
-        # Find the specific run in persona data
-        runs = persona_data.get('runs', [])
-        target_run = None
-        for run in runs:
-            if run.get('run_id') == run_id:
-                target_run = run
-                break
-        
-        if not target_run:
-            logger.error(f"Run ID {run_id} not found in persona data")
-            return None
-        
-        # Find the evaluation for this run
-        evaluations = eval_data.get('evaluations', [])
-        target_evaluation = None
-        for evaluation in evaluations:
-            if evaluation.get('run_id') == run_id:
-                target_evaluation = evaluation
-                break
-        
-        if not target_evaluation:
-            logger.error(f"Evaluation for run ID {run_id} not found")
-            return None
-        
-        # Extract evaluation results
-        eval_results = target_evaluation.get('evaluation_results', {})
-        overall = eval_results.get('overall', {})
-        best_predictions = eval_results.get('best_predictions', [])
-        worst_predictions = eval_results.get('worst_predictions', [])
-        
-        # Extract best predictions and their originals
-        best_preds = [pred.get('prediction', '') for pred in best_predictions]
-        best_originals = [pred.get('reference', '') for pred in best_predictions]
-        
-        # Extract worst predictions and their originals
-        worst_preds = [pred.get('prediction', '') for pred in worst_predictions]
-        worst_originals = [pred.get('reference', '') for pred in worst_predictions]
-        
-        return {
-            'user_id': user_id,
-            'run_id': run_id,
-            'persona': target_run.get('persona', ''),
-            'timestamp': target_evaluation.get('timestamp', ''),
-            'best_preds': best_preds,
-            'best_originals': best_originals,
-            'worst_preds': worst_preds,
-            'worst_originals': worst_originals,
-            'bleu_scores': overall.get('bleu', {}),
-            'rouge_scores': overall.get('rouge', {})
-        }
-        
-    except Exception as e:
-        logger.error(f"Error loading data: {e}")
+    # Check if file has at least 4 lines
+    if 2 not in cached_data or 3 not in cached_data:
+        logger.error(f"File {file_path} has fewer than 4 lines")
         return None
+    
+    # Get line 3 (index 2) for persona data
+    persona_data = cached_data[2]
+    if persona_data is None:
+        logger.error(f"Error parsing JSON from line 3 in {file_path}")
+        return None
+    
+    # Get line 4 (index 3) for evaluation data
+    eval_data = cached_data[3]
+    if eval_data is None:
+        logger.error(f"Error parsing JSON from line 4 in {file_path}")
+        return None
+    
+    # Get user_id (should be in both, but let's prioritize eval_data)
+    user_id = eval_data.get('user_id') or persona_data.get('user_id')
+    
+    # Find the specific run in persona data
+    runs = persona_data.get('runs', [])
+    target_run = None
+    for run in runs:
+        if run.get('run_id') == run_id:
+            target_run = run
+            break
+    
+    if not target_run:
+        logger.error(f"Run ID {run_id} not found in persona data")
+        return None
+    
+    # Find the evaluation for this run
+    evaluations = eval_data.get('evaluations', [])
+    target_evaluation = None
+    for evaluation in evaluations:
+        if evaluation.get('run_id') == run_id:
+            target_evaluation = evaluation
+            break
+    
+    if not target_evaluation:
+        logger.error(f"Evaluation for run ID {run_id} not found")
+        return None
+    
+    # Extract evaluation results
+    eval_results = target_evaluation.get('evaluation_results', {})
+    overall = eval_results.get('overall', {})
+    best_predictions = eval_results.get('best_predictions', [])
+    worst_predictions = eval_results.get('worst_predictions', [])
+    
+    # Extract best predictions and their originals
+    best_preds = [pred.get('prediction', '') for pred in best_predictions]
+    best_originals = [pred.get('reference', '') for pred in best_predictions]
+    
+    # Extract worst predictions and their originals
+    worst_preds = [pred.get('prediction', '') for pred in worst_predictions]
+    worst_originals = [pred.get('reference', '') for pred in worst_predictions]
+    
+    return {
+        'user_id': user_id,
+        'run_id': run_id,
+        'persona': target_run.get('persona', ''),
+        'timestamp': target_evaluation.get('timestamp', ''),
+        'best_preds': best_preds,
+        'best_originals': best_originals,
+        'worst_preds': worst_preds,
+        'worst_originals': worst_originals,
+        'bleu_scores': overall.get('bleu', {}),
+        'rouge_scores': overall.get('rouge', {})
+    }
     
 
 def load_latest_improved_persona(run_id, file_path):
@@ -349,49 +328,43 @@ def load_latest_improved_persona(run_id, file_path):
     :param file_path: Path to the JSONL file containing the reflections.
     :return: String containing the improved persona from the latest iteration, or None if not found.
     """
-    if not os.path.exists(file_path):
-        logger.error(f"File not found: {file_path}")
+    cache = get_file_cache()
+    
+    # Use cached data to avoid repeated file reads
+    cached_data = cache.read_file_with_cache(file_path)
+    if cached_data is None:
         return None
     
-    try:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            lines = file.readlines()
-            
-        # Check if file has at least 5 lines (reflections are on line 5, index 4)
-        if len(lines) < 5:
-            logger.error(f"File {file_path} has fewer than 5 lines")
-            return None
-        
-        # Parse line 5 (index 4) for reflection data
-        try:
-            reflections_data = json.loads(lines[4].strip())
-        except json.JSONDecodeError as e:
-            logger.error(f"Error decoding JSON from line 5 in {file_path}: {e}")
-            return None
-        
-        # Filter reflections by run_id
-        reflections = reflections_data.get('reflections', [])
-        run_reflections = [r for r in reflections if r.get('run_id') == run_id]
-        
-        if not run_reflections:
-            logger.warning(f"No reflections found for run_id {run_id}")
-            return None
-        
-        # Find the reflection with the highest iteration number
-        latest_reflection = max(run_reflections, key=lambda x: x.get('iteration', 0))
-        
-        # Extract improved_persona
-        improved_persona = latest_reflection.get('reflection_results', {}).get('improved_persona', '')
-        
-        if improved_persona:
-            logger.info(f"Loaded improved persona from run_id {run_id}, iteration {latest_reflection.get('iteration')}")
-            return improved_persona
-        else:
-            logger.warning(f"No improved_persona found for run_id {run_id}")
-            return None
-            
-    except Exception as e:
-        logger.error(f"Error loading improved persona: {e}")
+    # Check if file has at least 5 lines (reflections are on line 5, index 4)
+    if 4 not in cached_data:
+        logger.error(f"File {file_path} has fewer than 5 lines")
+        return None
+    
+    # Get line 5 (index 4) for reflection data
+    reflections_data = cached_data[4]
+    if reflections_data is None:
+        logger.error(f"Error parsing JSON from line 5 in {file_path}")
+        return None
+    
+    # Filter reflections by run_id
+    reflections = reflections_data.get('reflections', [])
+    run_reflections = [r for r in reflections if r.get('run_id') == run_id]
+    
+    if not run_reflections:
+        logger.warning(f"No reflections found for run_id {run_id}")
+        return None
+    
+    # Find the reflection with the highest iteration number
+    latest_reflection = max(run_reflections, key=lambda x: x.get('iteration', 0))
+    
+    # Extract improved_persona
+    improved_persona = latest_reflection.get('reflection_results', {}).get('improved_persona', '')
+    
+    if improved_persona:
+        logger.info(f"Loaded improved persona from run_id {run_id}, iteration {latest_reflection.get('iteration')}")
+        return improved_persona
+    else:
+        logger.warning(f"No improved_persona found for run_id {run_id}")
         return None
 
 

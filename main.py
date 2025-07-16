@@ -97,7 +97,9 @@ def process_user(user_file_path, config, run_id):
 
     # Mittlere Schleife: Iteration über Runden pro Benutzer
     for round_num in range(1, number_of_rounds + 1):
-        logger.debug(f"Starting round {round_num}/{number_of_rounds} for user {user_file}")
+        # Generate unique run_id for each round to track progression
+        round_run_id = f"{run_id}_round_{round_num}"
+        logger.debug(f"Starting round {round_num}/{number_of_rounds} for user {user_file} with run_id: {round_run_id}")
 
         # --- Imitation Generierung ---
         logger.info(f"Starting imitation generation for {user_file}...")
@@ -110,7 +112,7 @@ def process_user(user_file_path, config, run_id):
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             # Submit all stimuli for parallel processing
             future_to_stimulus = {
-                executor.submit(process_single_stimulus, stimulus_data, persona, config, user_file_path, run_id): stimulus_data
+                executor.submit(process_single_stimulus, stimulus_data, persona, config, user_file_path, round_run_id): stimulus_data
                 for stimulus_data in stimuli_to_process
             }
             
@@ -133,16 +135,16 @@ def process_user(user_file_path, config, run_id):
 
         # --- Evaluation ---
         logger.info(f"Starting evaluation for {user_file}...")
-        results = loader.load_predictions_orginales_formated(run_id=run_id, file_path=user_file_path)
-        logger.debug(f"Results for run_id {run_id}:")
+        results = loader.load_predictions_orginales_formated(run_id=round_run_id, file_path=user_file_path)
+        logger.debug(f"Results for run_id {round_run_id}:")
         evaluation_result = evaluate_with_individual_scores(results)
-        save_evaluation_results(file_path=user_file_path, evaluation_results=evaluation_result, run_id=run_id)
-        logger.debug(f"Evaluation results saved for run_id {run_id}: {evaluation_result}")
+        save_evaluation_results(file_path=user_file_path, evaluation_results=evaluation_result, run_id=round_run_id)
+        logger.debug(f"Evaluation results saved for run_id {round_run_id}: {evaluation_result}")
 
         # --- Reflection (nur wenn nicht die letzte Runde) ---
         if round_num < number_of_rounds:
             logger.info(f"Starting reflection for {user_file}...")
-            data_for_reflection = loader.load_results_for_reflection(run_id, user_file_path)
+            data_for_reflection = loader.load_results_for_reflection(round_run_id, user_file_path)
             reflection_template = templates.format_template(
                 template_config.get('reflection_template', 'reflect_results_template'),
                 **data_for_reflection
@@ -153,16 +155,16 @@ def process_user(user_file_path, config, run_id):
             try:
                 save_reflection_results(
                     file_path=user_file_path,
-                    run_id=run_id,
+                    run_id=round_run_id,
                     reflections=improved_persona,
                     iteration=round_num
                 )
-                logger.debug(f"Reflection results saved for run_id {run_id}, iteration {round_num}.")
+                logger.debug(f"Reflection results saved for run_id {round_run_id}, iteration {round_num}.")
             except Exception as e:
                 logger.error(f"Error saving reflection results: {e}")
 
             # Lade die neueste verbesserte Persona nach der Reflexion
-            persona = loader.load_latest_improved_persona(run_id=run_id, file_path=user_file_path)
+            persona = loader.load_latest_improved_persona(run_id=round_run_id, file_path=user_file_path)
             logger.debug("Persona updated with reflection results (if available).")
         
         logger.debug(f"Completed round {round_num}/{number_of_rounds} for user {user_file}")
@@ -223,6 +225,7 @@ def run_experiment(config):
 
 if __name__ == "__main__":
     logger.info('Starting...')
+    starttime = datetime.now()
     import argparse
     parser = argparse.ArgumentParser(description="Run experiment with YAML configuration.")
     parser.add_argument('--config', type=str, default='config.yaml',
@@ -234,3 +237,5 @@ if __name__ == "__main__":
 
     # Experiment ausführen
     run_experiment(experiment_config)
+    endtime = datetime.now()
+    logger.info(f"Experiment completed in {endtime - starttime}.")
