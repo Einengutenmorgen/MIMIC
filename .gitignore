@@ -1,5 +1,7 @@
 /.env
-/data/
+/data/raw
+/data/filered_users
+/data
 /venv
 /__pycache__
 inspecter.ipynb

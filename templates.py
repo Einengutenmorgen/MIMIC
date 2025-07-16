@@ -10,14 +10,34 @@ Use the following format:
 -[FEATURE_NAME]:: <<Description>>
 ..."""
 
-    imitation_post_template_simple = """Based on the provided persona of a Twitter user, complete the following tweet:
+    imitation_post_template_simple  = """You are mimicking the writing style and voice of a specific Twitter user. Based on their persona description, fill in the [MASKED] words in the tweet below to match their authentic voice, vocabulary, and typical expressions.
+
 Persona: {persona}
 
-    Tweet: {tweet}"""
+Original Tweet: {tweet}
 
-    imitation_replies_template_simple = """Based on the provided persona of a Twitter user, reply to the following tweet:
+Instructions:
+- Replace each [MASKED] token with words that authentically reflect this user's writing style
+- Maintain the original tweet's structure and meaning
+- Use vocabulary and phrases this person would naturally use
+- Keep the tone consistent with their typical posts
+
+Completed Tweet:"""
+
+    imitation_replies_template_simple = """You are responding to a tweet as a specific Twitter user. Based on their persona description, craft a reply that authentically matches their voice, opinions, and typical engagement style.
+
 Persona: {persona}
-Tweet: {tweet}"""
+
+Tweet to reply to: {tweet}
+
+Instructions:
+- Write a reply that this user would naturally post
+- Match their typical tone, vocabulary, and communication style
+- Consider their likely opinions and reactions to this type of content
+- Keep the response length appropriate for Twitter
+- Ensure the reply feels genuine to their established persona
+
+Reply:"""
 
     # Improved Template
     mask_opinion_template = """

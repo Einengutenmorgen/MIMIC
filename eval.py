@@ -98,9 +98,22 @@ def evaluate_with_individual_scores(list_of_imitation_dict):
         references=references_bleu
     )
     
-    # Top 3 best and worst
-    best_predictions = individual_scores[:3]
-    worst_predictions = individual_scores[-3:]
+    # Top 3 best and worst (with overlap prevention for fewer than 6 items)
+    total_items = len(individual_scores)
+    if total_items >= 6:
+        # Standard case: top 3 and bottom 3
+        best_predictions = individual_scores[:3]
+        worst_predictions = individual_scores[-3:]
+    else:
+        # Handle cases with fewer than 6 items to avoid overlap
+        if total_items <= 1:
+            best_predictions = individual_scores
+            worst_predictions = []
+        else:
+            # Calculate how many to take from each end without overlap
+            take_from_each_end = total_items // 2
+            best_predictions = individual_scores[:take_from_each_end]
+            worst_predictions = individual_scores[-take_from_each_end:]
     
     return {
         'overall': {
