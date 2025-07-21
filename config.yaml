@@ -1,7 +1,7 @@
 experiment:
-  run_name_prefix: '2025_07_09_1446' # None für Datumscode als Experimentnamen
-  users_dict: "C:/Users/Christoph.Hau/Experimente/ha/data/filtered_users" 
-  number_of_users: 10 #None to process all
+  run_name_prefix: '2025_07_16_mac2' # None für Datumscode als Experimentnamen
+  users_dict: "data/filtered_users" 
+  number_of_users: 100 #None to process all
   number_of_rounds: 15 # How often the modell reflects on its results
   num_stimuli_to_process: 6  # Anzahl der Stimuli, die pro Iterration verarbeitet werden sollen, None für alle
 

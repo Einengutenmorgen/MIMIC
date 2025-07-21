@@ -83,3 +83,4 @@ seaborn
 ollama
 rouge_score
 python-dotenv
+scipy
