@@ -84,3 +84,5 @@ ollama
 rouge_score
 python-dotenv
 scipy
+emoji
+spacy
