@@ -13,7 +13,7 @@ if hasattr(sys.stdout, 'buffer'):
 
 # Create a custom logger
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 # Create file handler with UTF-8 encoding
 f_handler = logging.FileHandler('logs/app.log', encoding='utf-8')

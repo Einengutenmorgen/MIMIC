@@ -78,12 +78,12 @@ def get_formatted_user_historie(file_path):
 def load_stimulus(file_path):
     """
     Load user Stimulus from a JSON file.
+    Uses preprocessed masked_text field when available, falls back to dynamic masking.
     
     :param file_path: Path to the JSON file containing user history.
     :return: a list of tuples containing formatted stimulus, whether it is a post or reply, and the tweet ID.
     """
     cache = get_file_cache()
-    
     # Use cached data to avoid repeated file reads
     cached_data = cache.read_file_with_cache(file_path)
     if cached_data is None:
@@ -104,8 +104,10 @@ def load_stimulus(file_path):
     
     # Check if it is a post or a reply
     user_holdout_tweets = user_holdout.get('tweets', [])
+    
     for stimulus in user_holdout_tweets:
         post_id = stimulus.get('tweet_id')
+        
         if stimulus.get('reply_to_id') is None and stimulus.get('previous_message') is None:
             is_post = True
             logger.info(f"Stimulus is a post: {stimulus.get('full_text')}")
@@ -113,24 +115,35 @@ def load_stimulus(file_path):
             is_post = False
         
         if is_post:
-            stimulus_post = f"{stimulus.get('full_text')}"
-            try:
-                stimulus_post = mask_text(stimulus_post)
-                if stimulus_post:
-                    logger.info(f"Stimulus is a post: {stimulus_post}")
-                else:
-                    logger.error("No valid post text found in the stimulus.")
-            except Exception as e:
-                logger.error(f"Error masking post text: {e}")
-                stimulus_post = "Post text could not be processed."
+            # Use preprocessed masked_text if available, otherwise fall back to dynamic masking
+            if 'masked_text' in stimulus and stimulus['masked_text']:
+                stimulus_post = stimulus['masked_text']
+                logger.info(f"Using preprocessed masked text for post: {stimulus_post}")
+            else:
+                # Fallback to dynamic masking if no preprocessed text available
+                stimulus_post = f"{stimulus.get('full_text')}"
+                logger.warning(f"No preprocessed masked_text found for tweet {post_id}, using dynamic masking")
+                
+                try:
+                    stimulus_post = mask_text(stimulus_post)
+                    if stimulus_post:
+                        logger.info(f"Dynamically masked post: {stimulus_post}")
+                    else:
+                        logger.error("No valid post text found in the stimulus.")
+                        stimulus_post = "Post text could not be processed."
+                except Exception as e:
+                    logger.error(f"Error masking post text: {e}")
+                    stimulus_post = "Post text could not be processed."
+            
             stimulus_formatted = f"Post: {stimulus_post}"
         else:
+            # Replies don't need masking according to your comment
             reply_stimulus = stimulus.get('previous_message')
             stimulus_formatted = f"Previous message: {reply_stimulus}"
+        
         all_stimuli.append((stimulus_formatted, is_post, post_id))
     
-    return all_stimuli
-        
+    return all_stimuli        
 def load_predictions(run_id, file_path):
     """
     Load predictions from a JSON Lines file based on run_id.

@@ -4,10 +4,26 @@ from openai import OpenAI
 from google import genai
 import ollama
 from dotenv import load_dotenv
+import yaml
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+# --- Konfiguration laden ---
+# Liest die Konfigurationsdatei, um auf die Modelleinstellungen zuzugreifen.
+try:
+    with open('config.yaml', 'r') as f:
+        config = yaml.safe_load(f)
+    # Holt den Namen des Ollama-Modells aus der Konfiguration.
+    # Falls der Schlüssel nicht existiert, wird ein Standardwert ('phi4:latest') verwendet.
+    ollama_model_name = config['llm'].get('ollama_model', 'phi4:latest')
+except FileNotFoundError:
+    logger.error("config.yaml nicht gefunden. Stelle sicher, dass die Datei existiert.")
+    # Setze einen Standardwert, falls die Datei nicht gefunden wird, damit das Skript nicht abstürzt
+    ollama_model_name = 'phi4:latest' 
+# --- Ende Konfiguration laden ---
+
 
 # Get API keys from environment
 openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -78,7 +94,7 @@ def call_ai(template, model="openai"):
         return result
     if model == "ollama":
         response = ollama_client.generate(
-            model='phi4:latest',
+            model=ollama_model_name,
             prompt=template,
             stream=False
         )

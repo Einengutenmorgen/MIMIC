@@ -81,7 +81,7 @@ def process_user(user_file_path, config, run_id):
     experiment_config = config.get('experiment', {})
     llm_config = config.get('llm', {})
     template_config = config.get('templates', {})
-    num_stimuli_to_process = experiment_config.get('num_stimuli_to_process', 3)
+    num_stimuli_to_process = experiment_config.get('num_stimuli_to_process')
     number_of_rounds = experiment_config.get('number_of_rounds')
 
     # --- Persona Generierung ---

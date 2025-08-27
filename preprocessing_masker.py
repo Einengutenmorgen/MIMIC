@@ -140,7 +140,7 @@ def process_user_file(file_path: Union[str, Path]):
         logger.error(f"Ein unerwarteter Fehler ist aufgetreten: {e}")
 
 if __name__ == '__main__':
-    test_file = Path("data/test_user/4252893976.0.jsonl") 
+    test_file = Path("data/test_user/1.347616040797266e+18.jsonl") 
     if test_file.exists():
         process_user_file(test_file)
         with open(test_file, 'r', encoding='utf-8') as f:
