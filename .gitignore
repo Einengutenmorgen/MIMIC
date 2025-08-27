@@ -7,3 +7,5 @@
 *.log
 config.yaml
 metric_analysis_results
+output/
+batch_results/

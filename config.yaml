@@ -1,13 +1,13 @@
 experiment:
-  run_name_prefix: '2025_07_16_mac2' # None für Datumscode als Experimentnamen
-  users_dict: "data/filtered_users" 
-  number_of_users: 100 #None to process all
-  number_of_rounds: 15 # How often the modell reflects on its results
-  num_stimuli_to_process: 6  # Anzahl der Stimuli, die pro Iterration verarbeitet werden sollen, None für alle
+  run_name_prefix: '2025_07_16_mac7' # None für Datumscode als Experimentnamen
+  users_dict: "data/filtered_users_without_links_meta/filtered_users_without_links" 
+  number_of_users: 24 #None to process all
+  number_of_rounds: 100 # How often the modell reflects on its results
+  num_stimuli_to_process: 6 # Anzahl der Stimuli, die pro Iterration verarbeitet werden sollen, None für alle
 
   #async settings
   use async: true 
-  num_workers: 4   # Number of user files to process in parallel.
+  num_workers: 6   # Number of user files to process in parallel.
 
 
 
@@ -15,6 +15,7 @@ llm:
   persona_model: "google" # Modell für die Persona-Generierung
   imitation_model: "ollama" # Modell für die Imitations-Generierung
   reflection_model: "google_json" # Modell für die Reflexions-Generierung
+  ollama_model: "gemma3:latest" # <-- HIER das Ollama-Modell festlegen
 
 templates:
   persona_template: "persona_template_simple"
