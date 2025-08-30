@@ -87,12 +87,28 @@ Return: <output>"""
 
 
 
+    llm_evaluation_template = """
+    Please evaluate the coherence and consistency of the following 'prediction' text based on the 'reference' text.
+    Coherence refers to how well the prediction flows and makes sense on its own.
+    Consistency refers to how well the prediction aligns with the facts and tone of the reference.
+
+    Reference: "{reference}"
+    Prediction: "{prediction}"
+
+    Provide a score from 1 to 5 for both coherence and consistency and a brief justification.
+    Format your response as:
+    Coherence: [score]
+    Consistency: [score]
+    Justification: [text]
+    """
+
     templates = {
         "persona_template_simple": persona_template_simple,
         "imitation_post_template_simple": imitation_post_template_simple,
         "imitation_replies_template_simple": imitation_replies_template_simple,
         "mask_opinion_template": mask_opinion_template,
-        "reflect_results_template": reflect_results_template
+        "reflect_results_template": reflect_results_template,
+        "llm_evaluation_template": llm_evaluation_template
     }
     
     if template_name in templates:

@@ -319,7 +319,8 @@ def load_results_for_reflection(run_id, file_path):
     worst_preds = [pred.get('prediction', '') for pred in worst_predictions]
     worst_originals = [pred.get('reference', '') for pred in worst_predictions]
     
-    return {
+    # Dynamically add all metrics from the 'overall' dictionary
+    reflection_results = {
         'user_id': user_id,
         'run_id': run_id,
         'persona': target_run.get('persona', ''),
@@ -328,9 +329,13 @@ def load_results_for_reflection(run_id, file_path):
         'best_originals': best_originals,
         'worst_preds': worst_preds,
         'worst_originals': worst_originals,
-        'bleu_scores': overall.get('bleu', {}),
-        'rouge_scores': overall.get('rouge', {})
     }
+    
+    # Add all scores from the 'overall' dictionary to the results
+    if overall:
+        reflection_results.update(overall)
+        
+    return reflection_results
     
 
 def load_latest_improved_persona(run_id, file_path):
