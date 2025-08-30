@@ -9,6 +9,13 @@ experiment:
   use async: true 
   num_workers: 6   # Number of user files to process in parallel.
 
+evaluation:
+  metrics:
+    - rouge
+    - bleu
+    - perplexity
+    - bertscore
+    - llm_evaluation
 
 
 llm:
