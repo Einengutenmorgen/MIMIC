@@ -77,7 +77,23 @@ def save_user_imitation(file_path, stimulus, persona, imitation, run_id, tweet_i
         if cached_data is None:
             logger.error(f"Failed to read file {file_path}")
             return
-        
+
+        # Ensure the file has at least 3 lines
+        if len(cached_data) < 3:
+            with open(file_path, 'r+', encoding='utf-8') as f:
+                lines = f.readlines()
+                while len(lines) < 3:
+                    lines.append('{}\n')
+                f.seek(0)
+                f.writelines(lines)
+                f.truncate()
+            # After modification, invalidate cache and reread
+            cache.invalidate_cache(file_path)
+            cached_data = cache.read_file_with_cache(file_path)
+            if cached_data is None:
+                logger.error(f"Failed to reread file {file_path} after padding")
+                return
+
         # Get user_id from first line
         if 0 not in cached_data:
             logger.error(f"File {file_path} is empty")
@@ -103,7 +119,7 @@ def save_user_imitation(file_path, stimulus, persona, imitation, run_id, tweet_i
         # Load or create runs data (line 3, index 2)
         runs_line_index = 2
         
-        if runs_line_index in cached_data and cached_data[runs_line_index] is not None:
+        if runs_line_index in cached_data and cached_data[runs_line_index] is not None and cached_data[runs_line_index]:
             runs_data = cached_data[runs_line_index]
         else:
             runs_data = {"user_id": user_id, "runs": []}
