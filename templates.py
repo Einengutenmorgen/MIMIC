@@ -74,8 +74,8 @@ Masked text (with at least 1 [MASKED]):"""
     Poor imitation: {worst_preds}
     Original: {worst_originals}
 
-    Average BLEU scores: {bleu_scores}
-    Average ROUGE scores: {rouge_scores}
+    Metric Scores:
+{metric_scores}
 
     Respond with a reflection of the results and an improved version of the persona description.
 
