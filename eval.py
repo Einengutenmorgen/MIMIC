@@ -116,9 +116,9 @@ def evaluate_with_individual_scores(list_of_imitation_dict, config=None):
     individual_scores = []
     
     # Sammle alle Daten und berechne individuelle Scores
-    for i, dict_item in enumerate(list_of_imitation_dict.to_dict('records')):
-        pred = dict_item['llm_response']
-        ref = dict_item['ground_truth']
+    for i, dict_item in enumerate(list_of_imitation_dict):
+        pred = dict_item['imitation']
+        ref = dict_item['original']
         
         predictions.append(pred)
         references_rouge.append(ref)

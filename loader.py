@@ -331,9 +331,10 @@ def load_results_for_reflection(run_id, file_path):
         'worst_originals': worst_originals,
     }
     
-    # Add all scores from the 'overall' dictionary to the results
+    # Create a formatted string for all metric scores
     if overall:
-        reflection_results.update(overall)
+        metric_scores_str = "\n".join([f"{key}: {value}" for key, value in overall.items()])
+        reflection_results['metric_scores'] = metric_scores_str
         
     return reflection_results
     
