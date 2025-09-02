@@ -10,6 +10,8 @@ from utils import load_config
 import random
 import concurrent.futures
 import threading
+import psutil
+import traceback
 
 
 # Thread lock for file operations to ensure thread safety
@@ -75,6 +77,7 @@ def process_user(user_file_path, config, run_id):
     """
     Führt die Verarbeitung für einen einzelnen Benutzer durch.
     """
+    process = psutil.Process(os.getpid())
     user_file = os.path.basename(user_file_path)
     logger.debug(f"Processing user: {user_file}")
 
@@ -83,94 +86,101 @@ def process_user(user_file_path, config, run_id):
     template_config = config.get('templates', {})
     num_stimuli_to_process = experiment_config.get('num_stimuli_to_process')
     number_of_rounds = experiment_config.get('number_of_rounds')
+    try:
 
-    # --- Persona Generierung ---
-    logger.info(f"Generating persona for {user_file}...")
-    user_history = loader.get_formatted_user_historie(user_file_path)
-    formatted_user_history = templates.format_template(
-        template_config.get('persona_template', 'persona_template_simple'),
-        historie=user_history
-    )
-    persona_model = llm_config.get('persona_model', 'google')
-    persona = call_ai(formatted_user_history, persona_model)
-    logger.debug(f"Persona for user {user_file.split('.')[0]}:\n{persona}")
 
-    # Mittlere Schleife: Iteration über Runden pro Benutzer
-    for round_num in range(1, number_of_rounds + 1):
-        # Generate unique run_id for each round to track progression
-        round_run_id = f"{run_id}_round_{round_num}"
-        logger.debug(f"Starting round {round_num}/{number_of_rounds} for user {user_file} with run_id: {round_run_id}")
+        # --- Persona Generierung ---
+        logger.info(f"Generating persona for {user_file}...")
+        user_history = loader.get_formatted_user_historie(user_file_path)
+        formatted_user_history = templates.format_template(
+            template_config.get('persona_template', 'persona_template_simple'),
+            historie=user_history
+        )
+        persona_model = llm_config.get('persona_model', 'google')
+        persona = call_ai(formatted_user_history, persona_model)
+        logger.debug(f"Persona for user {user_file.split('.')[0]}:\n{persona}")
 
-        # --- Imitation Generierung ---
-        logger.info(f"Starting imitation generation for {user_file}...")
-        all_stimuli = loader.load_stimulus(user_file_path)
+        # Mittlere Schleife: Iteration über Runden pro Benutzer
+        for round_num in range(1, number_of_rounds + 1):
+            # Generate unique run_id for each round to track progression
+            round_run_id = f"{run_id}_round_{round_num}"
+            logger.debug(f"Starting round {round_num}/{number_of_rounds} for user {user_file} with run_id: {round_run_id}")
 
-        # Parallel processing of stimuli using ThreadPoolExecutor
-        stimuli_to_process = all_stimuli[:num_stimuli_to_process]
-        logger.info(f"Processing {len(stimuli_to_process)} stimuli in parallel with up to 4 threads...")
-        
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            # Submit all stimuli for parallel processing
-            future_to_stimulus = {
-                executor.submit(process_single_stimulus, stimulus_data, persona, config, user_file_path, round_run_id): stimulus_data
-                for stimulus_data in stimuli_to_process
-            }
+            # --- Imitation Generierung ---
+            logger.info(f"Starting imitation generation for {user_file}...")
+            all_stimuli = loader.load_stimulus(user_file_path)
+
+            # Parallel processing of stimuli using ThreadPoolExecutor
+            stimuli_to_process = all_stimuli[:num_stimuli_to_process]
+            logger.info(f"Processing {len(stimuli_to_process)} stimuli in parallel with up to 4 threads...")
             
-            # Wait for all tasks to complete and handle results
-            successful_count = 0
-            for future in concurrent.futures.as_completed(future_to_stimulus):
-                stimulus_data = future_to_stimulus[future]
-                _, _, post_id = stimulus_data
-                try:
-                    result = future.result()
-                    if result:
-                        successful_count += 1
-                        logger.debug(f"Successfully processed stimulus {post_id}")
-                    else:
-                        logger.warning(f"Failed to process stimulus {post_id}")
-                except Exception as exc:
-                    logger.error(f"Stimulus {post_id} generated an exception: {exc}")
-            
-            logger.info(f"Completed parallel processing: {successful_count}/{len(stimuli_to_process)} stimuli processed successfully")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                # Submit all stimuli for parallel processing
+                future_to_stimulus = {
+                    executor.submit(process_single_stimulus, stimulus_data, persona, config, user_file_path, round_run_id): stimulus_data
+                    for stimulus_data in stimuli_to_process
+                }
+                
+                # Wait for all tasks to complete and handle results
+                successful_count = 0
+                for future in concurrent.futures.as_completed(future_to_stimulus):
+                    stimulus_data = future_to_stimulus[future]
+                    _, _, post_id = stimulus_data
+                    try:
+                        result = future.result()
+                        if result:
+                            successful_count += 1
+                            logger.debug(f"Successfully processed stimulus {post_id}")
+                        else:
+                            logger.warning(f"Failed to process stimulus {post_id}")
+                    except Exception as exc:
+                        logger.error(f"Stimulus {post_id} generated an exception: {exc}")
+                
+                logger.info(f"Completed parallel processing: {successful_count}/{len(stimuli_to_process)} stimuli processed successfully")
 
-        # --- Evaluation ---
-        logger.info(f"Starting evaluation for {user_file}...")
-        results = loader.load_predictions_orginales_formated(run_id=round_run_id, file_path=user_file_path)
-        logger.debug(f"Results for run_id {round_run_id}:")
-        evaluation_result = evaluate_with_individual_scores(results)
-        save_evaluation_results(file_path=user_file_path, evaluation_results=evaluation_result, run_id=round_run_id)
-        logger.debug(f"Evaluation results saved for run_id {round_run_id}: {evaluation_result}")
+            # --- Evaluation ---
+            logger.info(f"Starting evaluation for {user_file}...")
+            results = loader.load_predictions_orginales_formated(run_id=round_run_id, file_path=user_file_path)
+            logger.debug(f"Results for run_id {round_run_id}:")
+            evaluation_result = evaluate_with_individual_scores(results)
+            save_evaluation_results(file_path=user_file_path, evaluation_results=evaluation_result, run_id=round_run_id)
+            logger.debug(f"Evaluation results saved for run_id {round_run_id}: {evaluation_result}")
 
-        # --- Reflection (nur wenn nicht die letzte Runde) ---
-        if round_num < number_of_rounds:
-            logger.info(f"Starting reflection for {user_file}...")
-            data_for_reflection = loader.load_results_for_reflection(round_run_id, user_file_path)
-            reflection_template = templates.format_template(
-                template_config.get('reflection_template', 'reflect_results_template'),
-                **data_for_reflection
-            )
-            reflection_model = llm_config.get('reflection_model', 'google_json')
-            improved_persona = call_ai(reflection_template, reflection_model)
-
-            try:
-                save_reflection_results(
-                    file_path=user_file_path,
-                    run_id=round_run_id,
-                    reflections=improved_persona,
-                    iteration=round_num
+            # --- Reflection (nur wenn nicht die letzte Runde) ---
+            if round_num < number_of_rounds:
+                logger.info(f"Starting reflection for {user_file}...")
+                data_for_reflection = loader.load_results_for_reflection(round_run_id, user_file_path)
+                reflection_template = templates.format_template(
+                    template_config.get('reflection_template', 'reflect_results_template'),
+                    **data_for_reflection
                 )
-                logger.debug(f"Reflection results saved for run_id {round_run_id}, iteration {round_num}.")
-            except Exception as e:
-                logger.error(f"Error saving reflection results: {e}")
+                reflection_model = llm_config.get('reflection_model', 'google_json')
+                improved_persona = call_ai(reflection_template, reflection_model)
 
-            # Lade die neueste verbesserte Persona nach der Reflexion
-            persona = loader.load_latest_improved_persona(run_id=round_run_id, file_path=user_file_path)
-            logger.debug("Persona updated with reflection results (if available).")
+                try:
+                    save_reflection_results(
+                        file_path=user_file_path,
+                        run_id=round_run_id,
+                        reflections=improved_persona,
+                        iteration=round_num
+                    )
+                    logger.debug(f"Reflection results saved for run_id {round_run_id}, iteration {round_num}.")
+                except Exception as e:
+                    logger.error(f"Error saving reflection results: {e}")
+
+                # Lade die neueste verbesserte Persona nach der Reflexion
+                persona = loader.load_latest_improved_persona(run_id=round_run_id, file_path=user_file_path)
+                logger.debug("Persona updated with reflection results (if available).")
+            
+            logger.debug(f"Completed round {round_num}/{number_of_rounds} for user {user_file}")
         
-        logger.debug(f"Completed round {round_num}/{number_of_rounds} for user {user_file}")
-    
-    logger.info(f"Completed all rounds for user {user_file}")
-    return True
+        logger.info(f"Completed all rounds for user {user_file}")
+        return True
+    except Exception as e:
+        # This will catch any unexpected Python errors within the process
+        error_traceback = traceback.format_exc()
+        logger.error(f"[{user_file}] An unexpected error occurred in process: {e}\n{error_traceback}")
+        return False
 
 
 def run_experiment(config):
