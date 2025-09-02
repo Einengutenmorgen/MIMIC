@@ -14,10 +14,12 @@ import re
 warnings.filterwarnings('ignore')
 
 # --- Configuration ---
-RUN_PREFIX = "2025_0+9_01_r100_allmetrics"
-USERS_DIR = "test_user_v2/"
-OUTPUT_DIR = f"output/{RUN_PREFIX}_final_analysis/"
+RUN_PREFIX = "test_run_01"
+script_dir = os.path.dirname(os.path.abspath(__file__))
+# Erstellen Sie den absoluten Pfad zum Benutzerverzeichnis
+USERS_DIR = os.path.join(script_dir, "data/filtered_users")
 
+OUTPUT_DIR = os.path.join(script_dir, f"output/{RUN_PREFIX}_final_analysis/")
 # --- Helper Functions ---
 
 def _sanitize_filename(title):
