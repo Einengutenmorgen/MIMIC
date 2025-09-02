@@ -1,24 +1,42 @@
 import yaml
 from evaluate import load
+import numpy as np
+from llm import call_ai
+import re
+from templates import format_template
 
 # Load the configuration
 with open("config.yaml", "r") as f:
     config = yaml.safe_load(f)
-evaluation_metrics = config.get("evaluation", {}).get("metrics", [])
+
+# Get evaluation metrics from correct config path
+evaluation_config = config.get("evaluation", {})
+evaluation_metrics = evaluation_config.get("metrics", [])
+
+# Convert list to set for easier checking
+metrics_set = set(evaluation_metrics) if isinstance(evaluation_metrics, list) else set()
 
 # Load metrics based on the configuration
-if "rouge" in evaluation_metrics:
-    rouge = load("rouge")
-if "bleu" in evaluation_metrics:
-    bleu = load("bleu")
-if "perplexity" in evaluation_metrics:
-    perplexity = load("perplexity", module_type="metric")
-if "bertscore" in evaluation_metrics:
-    bertscore = load("bertscore")
+rouge = None
+bleu = None
+perplexity = None
+bertscore = None
 
-from llm import call_ai
-import re
-from templates import format_template
+if "rouge" in metrics_set:
+    rouge = load("rouge")
+    print("Loaded ROUGE metric")
+    
+if "bleu" in metrics_set:
+    bleu = load("bleu")
+    print("Loaded BLEU metric")
+    
+if "perplexity" in metrics_set:
+    perplexity = load("perplexity", module_type="metric")
+    print("Loaded Perplexity metric")
+    
+if "bertscore" in metrics_set or "bert_score" in metrics_set:
+    bertscore = load("bertscore")
+    print("Loaded BERTScore metric")
 
 
 def evaluate_with_llm(prediction, reference):
@@ -56,16 +74,11 @@ def evaluate_with_llm(prediction, reference):
             "raw_response": "",
         }
 
+
 def evaluate(list_of_imitation_dict):
     """
-    Evaluate the predictions against the references using ROUGE and BLEU metrics.
-    method uses output from load_predictions_orginales_formated
-    :input list_of_imitaion_dict: List of dictionaries containing 'predictions' and 'references'.
-        
-    Returns:
-        dict: A dictionary containing the ROUGE and BLEU scores.
+    Evaluate the predictions against the references using configured metrics.
     """
-    # Listen für alle Predictions und References aufbauen
     predictions = []
     references_rouge = []
     references_bleu = []
@@ -73,49 +86,59 @@ def evaluate(list_of_imitation_dict):
     for dict_item in list_of_imitation_dict:
         predictions.append(dict_item['imitation'])
         references_rouge.append(dict_item['original'])
-        # BLEU braucht Listen von Listen für multiple Referenzen
         references_bleu.append([dict_item['original']])
     
     results = {}
     
-    if "rouge" in evaluation_metrics:
+    if rouge is not None:
         rouge_result = rouge.compute(predictions=predictions, references=references_rouge, use_stemmer=False, use_aggregator=True)
         results['rouge'] = rouge_result
+        print(f"Computed ROUGE scores: {rouge_result}")
     
-    if "bleu" in evaluation_metrics:
+    if bleu is not None:
         bleu_result = bleu.compute(predictions=predictions, references=references_bleu, use_aggregator=True)
         results['bleu'] = bleu_result
+        print(f"Computed BLEU score: {bleu_result}")
     
-    if "perplexity" in evaluation_metrics:
+    if perplexity is not None:
         perplexity_result = perplexity.compute(predictions=predictions, model_id='gpt2')
         results['perplexity'] = perplexity_result
+        print(f"Computed Perplexity: {perplexity_result}")
     
-    if "bertscore" in evaluation_metrics:
+    if bertscore is not None:
         bertscore_result = bertscore.compute(predictions=predictions, references=references_rouge, lang="en")
         results['bertscore'] = bertscore_result
+        print(f"Computed BERTScore")
     
     return results
-  
-import numpy as np
 
 
-def evaluate_with_individual_scores(list_of_imitation_dict, config=None):
+def evaluate_with_individual_scores(list_of_imitation_dict, config_override=None):
     """
     Evaluate predictions with both overall and individual scores.
-    Returns best/worst predictions based on combined ROUGE-L and BLEU scores.
+    Returns best/worst predictions based on combined scores.
     """
-    if config is None:
-        # Load the configuration if not provided
-        with open("config.yaml", "r") as f:
-            config = yaml.safe_load(f)
+    # Use override config or load from file
+    if config_override:
+        current_config = config_override
+    else:
+        current_config = config
     
-    evaluation_metrics = config.get("metrics", {})
+    # Get evaluation metrics - handle both possible config structures
+    eval_config = current_config.get("evaluation", {})
+    metrics_list = eval_config.get("metrics", [])
+    
+    # Convert to set for easier checking
+    metrics_enabled = set(metrics_list) if isinstance(metrics_list, list) else set()
+    
+    print(f"Enabled metrics: {metrics_enabled}")
+    
     predictions = []
     references_rouge = []
     references_bleu = []
     individual_scores = []
     
-    # Sammle alle Daten und berechne individuelle Scores
+    # Process each imitation
     for i, dict_item in enumerate(list_of_imitation_dict):
         pred = dict_item['imitation']
         ref = dict_item['original']
@@ -124,49 +147,80 @@ def evaluate_with_individual_scores(list_of_imitation_dict, config=None):
         references_rouge.append(ref)
         references_bleu.append([ref])
         
-        # Individuelle Scores berechnen
+        # Calculate individual scores
         rouge_individual = None
-        if evaluation_metrics.get("rouge"):
-            rouge_individual = rouge.compute(
-                predictions=[pred],
-                references=[ref],
-                use_stemmer=False
-            )
+        if "rouge" in metrics_enabled and rouge is not None:
+            try:
+                rouge_individual = rouge.compute(
+                    predictions=[pred],
+                    references=[ref],
+                    use_stemmer=False
+                )
+                print(f"Item {i}: ROUGE scores calculated")
+            except Exception as e:
+                print(f"Error computing ROUGE for item {i}: {e}")
 
         bleu_individual = None
-        if evaluation_metrics.get("bleu"):
-            bleu_individual = bleu.compute(
-                predictions=[pred],
-                references=[[ref]]
-            )
+        if "bleu" in metrics_enabled and bleu is not None:
+            try:
+                bleu_individual = bleu.compute(
+                    predictions=[pred],
+                    references=[[ref]]
+                )
+                print(f"Item {i}: BLEU score = {bleu_individual.get('bleu', 0):.4f}")
+            except Exception as e:
+                print(f"Error computing BLEU for item {i}: {e}")
         
         perplexity_individual = None
-        if evaluation_metrics.get("perplexity"):
-            perplexity_individual = perplexity.compute(predictions=[pred], model_id='gpt2')
+        if "perplexity" in metrics_enabled and perplexity is not None:
+            try:
+                perplexity_individual = perplexity.compute(predictions=[pred], model_id='gpt2')
+            except Exception as e:
+                print(f"Error computing perplexity for item {i}: {e}")
 
         bertscore_individual = None
-        if evaluation_metrics.get("bert_score"):
-            bertscore_individual = bertscore.compute(predictions=[pred], references=[ref], lang="en")
+        if ("bertscore" in metrics_enabled or "bert_score" in metrics_enabled) and bertscore is not None:
+            try:
+                bertscore_individual = bertscore.compute(predictions=[pred], references=[ref], lang="en")
+            except Exception as e:
+                print(f"Error computing BERTScore for item {i}: {e}")
         
         # LLM-based evaluation
         llm_evaluation = None
-        if evaluation_metrics.get("gpt_eval"):
-            llm_evaluation = evaluate_with_llm(pred, ref)
+        if "gpt_eval" in metrics_enabled:
+            try:
+                llm_evaluation = evaluate_with_llm(pred, ref)
+            except Exception as e:
+                print(f"Error in LLM evaluation for item {i}: {e}")
 
-        # Combined Score für Ranking (gewichteter Durchschnitt)
+        # Calculate combined score (weighted average)
         combined_score = 0
+        weight_sum = 0
+        
         if rouge_individual:
-            combined_score += rouge_individual['rougeL'] * 0.4
+            rouge_l_score = rouge_individual.get('rougeL', 0)
+            combined_score += rouge_l_score * 0.4
+            weight_sum += 0.4
+            
         if bleu_individual:
-            combined_score += bleu_individual['bleu'] * 0.3
+            bleu_score = bleu_individual.get('bleu', 0)
+            combined_score += bleu_score * 0.3
+            weight_sum += 0.3
+            
         if bertscore_individual:
-            combined_score += np.mean(bertscore_individual['precision']) * 0.3 # BertScore precision
+            bert_precision = np.mean(bertscore_individual.get('precision', [0]))
+            combined_score += bert_precision * 0.3
+            weight_sum += 0.3
+        
+        # Normalize combined score if not all metrics were available
+        if weight_sum > 0:
+            combined_score = combined_score / weight_sum
         
         scores_entry = {
             'index': i,
             'prediction': pred,
             'reference': ref,
-            'combined_score': combined_score,
+            'combined_score': float(combined_score),
             'tweet_id': dict_item.get('tweet_id', f'item_{i}')
         }
 
@@ -175,76 +229,107 @@ def evaluate_with_individual_scores(list_of_imitation_dict, config=None):
         if bleu_individual:
             scores_entry['bleu'] = bleu_individual
         if perplexity_individual:
-            scores_entry['perplexity'] = perplexity_individual['perplexities'][0]
+            scores_entry['perplexity'] = perplexity_individual
         if bertscore_individual:
             scores_entry['bertscore'] = {
-                'precision': bertscore_individual['precision'][0],
-                'recall': bertscore_individual['recall'][0],
-                'f1': bertscore_individual['f1'][0],
+                'precision': bertscore_individual['precision'][0] if bertscore_individual.get('precision') else 0,
+                'recall': bertscore_individual['recall'][0] if bertscore_individual.get('recall') else 0,
+                'f1': bertscore_individual['f1'][0] if bertscore_individual.get('f1') else 0,
             }
         if llm_evaluation:
             scores_entry['llm_evaluation'] = llm_evaluation
         
         individual_scores.append(scores_entry)
     
-    # Sortiere nach combined_score
+    # Sort by combined_score
     individual_scores.sort(key=lambda x: x['combined_score'], reverse=True)
     
-    # Overall Scores
+    # Calculate overall scores
     overall_scores = {}
-    if evaluation_metrics.get("rouge"):
-        overall_scores['rouge'] = rouge.compute(
-            predictions=predictions,
-            references=references_rouge,
-            use_stemmer=False
-        )
-    if evaluation_metrics.get("bleu"):
-        overall_scores['bleu'] = bleu.compute(
-            predictions=predictions,
-            references=references_bleu
-        )
-    if evaluation_metrics.get("perplexity"):
-        perplexity_overall = perplexity.compute(predictions=predictions, model_id='gpt2')
-        overall_scores['perplexity'] = {
-            'mean_perplexity': perplexity_overall['mean_perplexity'],
-            'perplexities': perplexity_overall['perplexities']
-        }
-    if evaluation_metrics.get("bert_score"):
-        bertscore_overall = bertscore.compute(predictions=predictions, references=references_rouge, lang="en")
-        overall_scores['bertscore'] = {
-            'precision': np.mean(bertscore_overall['precision']),
-            'recall': np.mean(bertscore_overall['recall']),
-            'f1': np.mean(bertscore_overall['f1']),
-        }
+    
+    if "rouge" in metrics_enabled and rouge is not None:
+        try:
+            overall_rouge = rouge.compute(
+                predictions=predictions,
+                references=references_rouge,
+                use_stemmer=False
+            )
+            overall_scores['rouge'] = overall_rouge
+            print(f"Overall ROUGE scores: {overall_rouge}")
+        except Exception as e:
+            print(f"Error computing overall ROUGE: {e}")
+            
+    if "bleu" in metrics_enabled and bleu is not None:
+        try:
+            overall_bleu = bleu.compute(
+                predictions=predictions,
+                references=references_bleu
+            )
+            overall_scores['bleu'] = overall_bleu
+            print(f"Overall BLEU score: {overall_bleu}")
+        except Exception as e:
+            print(f"Error computing overall BLEU: {e}")
+            
+    if "perplexity" in metrics_enabled and perplexity is not None:
+        try:
+            perplexity_overall = perplexity.compute(predictions=predictions, model_id='gpt2')
+            overall_scores['perplexity'] = {
+                'mean_perplexity': perplexity_overall['mean_perplexity'],
+                'perplexities': perplexity_overall['perplexities']
+            }
+        except Exception as e:
+            print(f"Error computing overall perplexity: {e}")
+            
+    if ("bertscore" in metrics_enabled or "bert_score" in metrics_enabled) and bertscore is not None:
+        try:
+            bertscore_overall = bertscore.compute(predictions=predictions, references=references_rouge, lang="en")
+            overall_scores['bertscore'] = {
+                'precision': np.mean(bertscore_overall['precision']),
+                'recall': np.mean(bertscore_overall['recall']),
+                'f1': np.mean(bertscore_overall['f1']),
+            }
+        except Exception as e:
+            print(f"Error computing overall BERTScore: {e}")
 
-    # Top 3 best and worst (with overlap prevention for fewer than 6 items)
+    # Select best and worst predictions
     total_items = len(individual_scores)
     if total_items >= 6:
-        # Standard case: top 3 and bottom 3
         best_predictions = individual_scores[:3]
         worst_predictions = individual_scores[-3:]
     else:
-        # Handle cases with fewer than 6 items to avoid overlap
         if total_items <= 1:
             best_predictions = individual_scores
             worst_predictions = []
         else:
-            # Calculate how many to take from each end without overlap
             take_from_each_end = total_items // 2
             best_predictions = individual_scores[:take_from_each_end]
             worst_predictions = individual_scores[-take_from_each_end:]
     
     overall_scores['total_samples'] = len(predictions)
 
+    # Calculate statistics
+    if individual_scores:
+        combined_scores = [s['combined_score'] for s in individual_scores]
+        statistics = {
+            'mean_combined_score': float(np.mean(combined_scores)),
+            'std_combined_score': float(np.std(combined_scores)),
+            'best_score': float(individual_scores[0]['combined_score']) if individual_scores else 0,
+            'worst_score': float(individual_scores[-1]['combined_score']) if individual_scores else 0
+        }
+    else:
+        statistics = {
+            'mean_combined_score': 0.0,
+            'std_combined_score': 0.0,
+            'best_score': 0,
+            'worst_score': 0
+        }
+    
+    print(f"Evaluation complete: Mean combined score = {statistics['mean_combined_score']:.4f}")
+    
     return {
         'overall': overall_scores,
         'individual_scores': individual_scores,
         'best_predictions': best_predictions,
         'worst_predictions': worst_predictions,
-        'statistics': {
-            'mean_combined_score': np.mean([s['combined_score'] for s in individual_scores]),
-            'std_combined_score': np.std([s['combined_score'] for s in individual_scores]),
-            'best_score': individual_scores[0]['combined_score'],
-            'worst_score': individual_scores[-1]['combined_score']
-        }
+        'statistics': statistics
     }
