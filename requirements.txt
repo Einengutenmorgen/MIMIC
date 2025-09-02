@@ -87,3 +87,6 @@ scipy
 emoji
 spacy
 PyYAML
+transformers
+torch
+bert_score
