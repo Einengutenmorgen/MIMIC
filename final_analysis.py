@@ -14,8 +14,8 @@ import re
 warnings.filterwarnings('ignore')
 
 # --- Configuration ---
-RUN_PREFIX = "2025_07_09"
-USERS_DIR = "data/filtered_users"
+RUN_PREFIX = "2025_0+9_01_r100_allmetrics"
+USERS_DIR = "test_user_v2/"
 OUTPUT_DIR = f"output/{RUN_PREFIX}_final_analysis/"
 
 # --- Helper Functions ---
@@ -76,11 +76,25 @@ def extract_metrics(df):
                     })
                 if 'bleu' in overall_dict and isinstance(overall_dict['bleu'], dict):
                     base_row['overall_bleu'] = overall_dict['bleu'].get('bleu', 0)
+
+                # Extract new metrics: perplexity, bertscore, llm_evaluation
+                if 'perplexity' in overall_dict and isinstance(overall_dict['perplexity'], dict):
+                    base_row['perplexity'] = overall_dict['perplexity'].get('mean_perplexity', 0)
+                if 'bertscore' in overall_dict and isinstance(overall_dict['bertscore'], dict):
+                    base_row['bertscore_precision'] = np.mean(overall_dict['bertscore'].get('precision', [0]))
+                    base_row['bertscore_recall'] = np.mean(overall_dict['bertscore'].get('recall', [0]))
+                    base_row['bertscore_f1'] = np.mean(overall_dict['bertscore'].get('f1', [0]))
+                if 'llm_evaluation' in overall_dict:
+                    base_row['llm_evaluation'] = overall_dict.get('llm_evaluation', 0)
+
             if isinstance(row['individual_scores'], list):
                 scores = {
                     'combined': [item.get('combined_score') for item in row['individual_scores'] if isinstance(item, dict) and 'combined_score' in item],
                     'rouge1': [item['rouge'].get('rouge1', 0) for item in row['individual_scores'] if isinstance(item, dict) and 'rouge' in item],
-                    'bleu': [item['bleu'].get('bleu', 0) for item in row['individual_scores'] if isinstance(item, dict) and 'bleu' in item]
+                    'bleu': [item['bleu'].get('bleu', 0) for item in row['individual_scores'] if isinstance(item, dict) and 'bleu' in item],
+                    'perplexity': [item['perplexity'].get('mean_perplexity', 0) for item in row['individual_scores'] if isinstance(item, dict) and 'perplexity' in item],
+                    'bertscore_f1': [np.mean(item['bertscore'].get('f1', [0])) for item in row['individual_scores'] if isinstance(item, dict) and 'bertscore' in item],
+                    'llm_evaluation': [item.get('llm_evaluation', 0) for item in row['individual_scores'] if isinstance(item, dict) and 'llm_evaluation' in item]
                 }
                 if scores['combined']:
                     base_row.update({
@@ -93,6 +107,12 @@ def extract_metrics(df):
                     base_row['individual_mean_rouge1'] = np.mean(scores['rouge1'])
                 if scores['bleu']:
                     base_row['individual_mean_bleu'] = np.mean(scores['bleu'])
+                if scores['perplexity']:
+                    base_row['individual_mean_perplexity'] = np.mean(scores['perplexity'])
+                if scores['bertscore_f1']:
+                    base_row['individual_mean_bertscore_f1'] = np.mean(scores['bertscore_f1'])
+                if scores['llm_evaluation']:
+                    base_row['individual_mean_llm_evaluation'] = np.mean(scores['llm_evaluation'])
             extracted_rows.append(base_row)
         except Exception as e:
             print(f"Error processing row {idx}: {e}")
