@@ -36,24 +36,37 @@ class RoundAnalyzer:
                 logger.error(f"No user_id found in {file_path}")
                 return {}
             
-            # Extract evaluations from line 4 (index 3)
-            evaluations_data = cached_data.get(3, {})
-            evaluations = evaluations_data.get('evaluations', [])
-            
-            # Group by rounds
+            # Extract runs from line 3 (index 2) and evaluations from line 4 (index 3)
+            runs_data = cached_data.get(2, {}).get('runs', [])
+            evaluations_data = cached_data.get(3, {}).get('evaluations', [])
+
+            # Create a dictionary to hold evaluation results keyed by run_id
+            eval_results_map = {
+                eval_entry.get('run_id'): eval_entry.get('evaluation_results', {})
+                for eval_entry in evaluations_data
+            }
+
+            # Group by rounds, merging run and evaluation data
             round_data = {}
-            for eval_entry in evaluations:
-                run_id = eval_entry.get('run_id', '')
+            for run_entry in runs_data:
+                run_id = run_entry.get('run_id', '')
                 if '_round_' in run_id:
-                    # Extract round number from run_id
-                    round_num = int(run_id.split('_round_')[1])
-                    round_data[round_num] = {
-                        'user_id': user_id,
-                        'round': round_num,
-                        'run_id': run_id,
-                        'timestamp': eval_entry.get('timestamp'),
-                        'evaluation_results': eval_entry.get('evaluation_results', {})
-                    }
+                    try:
+                        round_num = int(run_id.split('_round_')[1])
+                        # Merge run info with corresponding evaluation results
+                        if run_id in eval_results_map:
+                            round_data[round_num] = {
+                                'user_id': user_id,
+                                'round': round_num,
+                                'run_id': run_id,
+                                'timestamp': run_entry.get('timestamp'),
+                                'evaluation_results': eval_results_map[run_id]
+                            }
+                        else:
+                            logger.warning(f"No evaluation found for run_id: {run_id}")
+                    except (ValueError, IndexError):
+                        logger.warning(f"Could not parse round number from run_id: {run_id}")
+                        continue
             
             return round_data
             
@@ -83,20 +96,22 @@ class RoundAnalyzer:
                 if base_run_id and not data['run_id'].startswith(base_run_id):
                     continue
                 
-                # Extract metrics
-                eval_results = data['evaluation_results']
+                # Restructure the data to match the expected format in final_analysis.py
+                eval_results = data.get('evaluation_results', {})
                 
-                # Flatten the results
+                # The structure in final_analysis.py expects nested dictionaries
+                # for 'statistics', 'overall', and 'individual_scores'.
+                # We will reconstruct this structure here.
+                
                 result_row = {
                     'user_id': data['user_id'],
                     'round': round_num,
                     'run_id': data['run_id'],
-                    'timestamp': data['timestamp']
+                    'timestamp': data['timestamp'],
+                    'statistics': eval_results.get('statistics', {}),
+                    'overall': eval_results.get('overall', {}),
+                    'individual_scores': eval_results.get('individual_scores', [])
                 }
-                
-                # Add all evaluation metrics
-                for metric, value in eval_results.items():
-                    result_row[metric] = value
                 
                 all_results.append(result_row)
         
