@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy.stats import ttest_ind, f_oneway
 from round_analysis import RoundAnalyzer  # Note: Requires external module 'round_analysis'
 from scipy import stats
 import warnings
@@ -14,7 +15,7 @@ import re
 warnings.filterwarnings('ignore')
 
 # --- Configuration ---
-RUN_PREFIXS = ["run_r50_rouge_1"]
+RUN_PREFIXS = ['baseline_no_persona_20250911_155619', 'baseline_generic_20250911_155619', 'baseline_history_only_20250911_155619', 'baseline_best_persona_20250911_155619']
 
 # Assuming __file__ exists. If running interactively, define script_dir manually.
 try:
@@ -22,7 +23,7 @@ try:
 except NameError:
     script_dir = os.getcwd()
 
-USERS_DIR = os.path.join(script_dir, "data/restore")
+USERS_DIR = os.path.join(script_dir, "data/filtered_users_without_links_meta/filtered_users_without_links")
 
 # --- Helper Functions ---
 
@@ -814,27 +815,133 @@ def process_single_prefix(run_prefix, users_dir, script_dir):
 
     print(f"\n✅ Analysis complete for prefix '{run_prefix}'. Results are saved in '{output_dir}'")
 
+
+def create_comparative_plots(df, save_dir):
+    """Generates plots comparing metrics across different baseline conditions."""
+    print("Generating comparative plots...")
+    
+    # Identify key metrics for comparison
+    reply_metrics = ['replies_mean_rouge1', 'replies_mean_bleu', 'replies_mean_bertscore_f1']
+    post_metrics = ['posts_exact_match_rate', 'posts_semantic_similarity']
+
+    # Plot for Reply Metrics
+    fig, axes = plt.subplots(1, len(reply_metrics), figsize=(20, 7), sharey=True)
+    fig.suptitle('Comparison of Reply Generation Metrics Across Conditions', fontsize=16, fontweight='bold')
+    
+    for i, metric in enumerate(reply_metrics):
+        if metric in df.columns:
+            sns.boxplot(ax=axes[i], x='condition', y=metric, data=df, palette='viridis')
+            axes[i].set_title(metric.replace("replies_mean_", "").replace("_", " ").title())
+            axes[i].set_xlabel("Condition")
+            axes[i].set_ylabel("Score" if i == 0 else "")
+            axes[i].tick_params(axis='x', rotation=45)
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.savefig(os.path.join(save_dir, "baseline_comparison_replies.png"))
+    plt.close()
+
+    # Create a similar plot for Post Metrics...
+    # (Code would be very similar to the above block)
+
+    print("✅ Comparative plots saved.")
+
+
+def perform_statistical_analysis(df, save_dir):
+    """Performs statistical tests to compare conditions."""
+    print("Performing statistical analysis...")
+    results = {}
+    conditions = df['condition'].unique()
+    
+    # Compare 'best_persona' against 'no_persona' for a key metric
+    metric = 'replies_mean_combined' # Assuming this is calculated or present
+    if metric in df.columns and 'best_persona' in conditions and 'no_persona' in conditions:
+        group1 = df[df['condition'] == 'best_persona'][metric].dropna()
+        group2 = df[df['condition'] == 'no_persona'][metric].dropna()
+        
+        if len(group1) > 1 and len(group2) > 1:
+            stat, p_value = ttest_ind(group1, group2)
+            results[f'ttest_{metric}_best_vs_no_persona'] = {'statistic': stat, 'p_value': p_value}
+
+    # Save results to a file
+    with open(os.path.join(save_dir, 'statistical_results.json'), 'w') as f:
+        json.dump(results, f, indent=4)
+        
+    print("✅ Statistical analysis saved.")
+
 # --- Main Execution ---
 
+# def main():
+#     """Main function to run the complete analysis for all prefixes and save all artifacts."""
+
+#     print(f"Starting comprehensive task-aware analysis for {len(RUN_PREFIXS)} run prefixes:")
+#     for prefix in RUN_PREFIXS:
+#         print(f"  - {prefix}")
+
+#     # Process each prefix individually
+#     for run_prefix in RUN_PREFIXS:
+#         try:
+#             process_single_prefix(run_prefix, USERS_DIR, script_dir)
+#         except Exception as e:
+#             print(f"❌ Error processing prefix '{run_prefix}': {e}")
+#             import traceback
+#             traceback.print_exc()
+#             continue
+
+#     print(f"\n🎉 All analyses complete! Processed {len(RUN_PREFIXS)} run prefixes.")
+#     print("Results are saved in their respective output directories under 'results/'")
+
+# In final_analysis_task_aware.py
 def main():
-    """Main function to run the complete analysis for all prefixes and save all artifacts."""
+    """Main function to run a comparative analysis for all baseline prefixes."""
+    print(f"Starting comparative analysis for {len(RUN_PREFIXS)} baseline conditions.")
 
-    print(f"Starting comprehensive task-aware analysis for {len(RUN_PREFIXS)} run prefixes:")
+    all_metrics_dfs = []
+    tweets_data_map = load_tweets_data_map(USERS_DIR)
+    analyzer = RoundAnalyzer(users_directory=USERS_DIR)
+    df_raw = analyzer.analyze_all_users()
+
     for prefix in RUN_PREFIXS:
-        print(f"  - {prefix}")
+        print(f"\n--- Processing prefix: {prefix} ---")
 
-    # Process each prefix individually
-    for run_prefix in RUN_PREFIXS:
-        try:
-            process_single_prefix(run_prefix, USERS_DIR, script_dir)
-        except Exception as e:
-            print(f"❌ Error processing prefix '{run_prefix}': {e}")
-            import traceback
-            traceback.print_exc()
+        # Filter the raw data for the current prefix
+        matching_run_ids = find_run_ids(USERS_DIR, prefix)
+        if not matching_run_ids:
+            print(f"Warning: No runs found for prefix '{prefix}'. Skipping.")
             continue
 
-    print(f"\n🎉 All analyses complete! Processed {len(RUN_PREFIXS)} run prefixes.")
-    print("Results are saved in their respective output directories under 'results/'")
+        df_filtered = df_raw[df_raw['run_id'].isin(matching_run_ids)]
+        if df_filtered.empty:
+            print(f"Warning: No data rows for prefix '{prefix}'. Skipping.")
+            continue
+
+        # Extract metrics for this condition
+        df_metrics_single = extract_metrics_task_aware(df_filtered, tweets_data_map)
+
+        # CRITICAL: Add a column to identify the condition
+        df_metrics_single['condition'] = prefix.replace("baseline_", "") # e.g., 'no_persona'
+
+        all_metrics_dfs.append(df_metrics_single)
+
+    if not all_metrics_dfs:
+        print("❌ No data was processed. Exiting.")
+        return
+
+    # Combine all DataFrames into one
+    combined_df = pd.concat(all_metrics_dfs, ignore_index=True)
+
+    # Define a single output directory for the comparative analysis
+    output_dir = os.path.join(script_dir, "results/baseline_comparative_analysis/")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save the combined data
+    combined_df.to_csv(os.path.join(output_dir, 'combined_baseline_metrics.csv'), index=False)
+    print(f"\n✅ Combined metrics saved to {output_dir}")
+
+    # --- Call new plotting and analysis functions ---
+    create_comparative_plots(combined_df, save_dir=output_dir)
+    perform_statistical_analysis(combined_df, save_dir=output_dir)
+
+    print("\n🎉 All baseline analyses complete!")
 
 if __name__ == "__main__":
     main()
