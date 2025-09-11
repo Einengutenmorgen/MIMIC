@@ -46,24 +46,41 @@ class RoundAnalyzer:
                 for eval_entry in evaluations_data
             }
 
+            # Create a dictionary to hold run metadata keyed by run_id
+            runs_map = {
+                run_entry.get('run_id'): run_entry
+                for run_entry in runs_data
+            }
+
             # Group by rounds, merging run and evaluation data
             round_data = {}
-            for run_entry in runs_data:
-                run_id = run_entry.get('run_id', '')
+            
+            # Get all unique run_ids from both sources
+            all_run_ids = set(runs_map.keys()) | set(eval_results_map.keys())
+            
+            for run_id in all_run_ids:
                 if '_round_' in run_id:
                     try:
                         round_num = int(run_id.split('_round_')[1])
-                        # Merge run info with corresponding evaluation results
-                        if run_id in eval_results_map:
+                        
+                        # Get run metadata (might be None if only in evaluations)
+                        run_entry = runs_map.get(run_id, {})
+                        
+                        # Get evaluation results (might be None if only in runs)
+                        eval_results = eval_results_map.get(run_id, {})
+                        
+                        # Only process if we have evaluation results
+                        if eval_results:
                             round_data[round_num] = {
                                 'user_id': user_id,
                                 'round': round_num,
                                 'run_id': run_id,
-                                'timestamp': run_entry.get('timestamp'),
-                                'evaluation_results': eval_results_map[run_id]
+                                'timestamp': run_entry.get('timestamp'),  # Might be None
+                                'evaluation_results': eval_results
                             }
                         else:
                             logger.warning(f"No evaluation found for run_id: {run_id}")
+                            
                     except (ValueError, IndexError):
                         logger.warning(f"Could not parse round number from run_id: {run_id}")
                         continue
@@ -73,7 +90,7 @@ class RoundAnalyzer:
         except Exception as e:
             logger.error(f"Error extracting round data from {file_path}: {e}")
             return {}
-    
+        
     def analyze_all_users(self, base_run_id: Optional[str] = None) -> pd.DataFrame:
         """
         Analyze performance progression for all users

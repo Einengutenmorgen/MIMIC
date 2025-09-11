@@ -14,12 +14,12 @@ import re
 warnings.filterwarnings('ignore')
 
 # --- Configuration ---
-RUN_PREFIX = "test_run_01"
+RUN_PREFIXS = ["run_r50_bleu_only", "run_r50_perplexity_only", "run_r50_all_metrics", "run_r50_bertscore"]
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 # Erstellen Sie den absoluten Pfad zum Benutzerverzeichnis
-USERS_DIR = os.path.join(script_dir, "data/filtered_users")
+USERS_DIR = os.path.join(script_dir, "data/restore")
 
-OUTPUT_DIR = os.path.join(script_dir, f"output/{RUN_PREFIX}_final_analysis/")
 # --- Helper Functions ---
 
 def _sanitize_filename(title):
@@ -28,26 +28,67 @@ def _sanitize_filename(title):
     return re.sub(r'[^a-zA-Z0-9_.-]', '', title)
 
 def find_run_ids(users_directory, prefix):
-    """Find all run_ids in the user files that start with a given prefix."""
+    """Find all run_ids in the user files that start with a given prefix.
+    
+    Updated to check all lines and all possible data structures.
+    """
     run_ids = set()
     if not os.path.isdir(users_directory):
         print(f"Error: Directory not found at {users_directory}")
         return []
+    
     user_files = [f for f in os.listdir(users_directory) if f.endswith('.jsonl')]
+    
     for user_file in user_files:
         user_file_path = os.path.join(users_directory, user_file)
         try:
             with open(user_file_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
-                if len(lines) > 2:
-                    data = json.loads(lines[2])
-                    if 'runs' in data:
-                        for run in data.get('runs', []):
-                            run_id = run.get('run_id')
-                            if run_id and run_id.startswith(prefix):
-                                run_ids.add(run_id)
-        except (json.JSONDecodeError, IndexError, FileNotFoundError):
+                
+                # Check all lines, not just line 3
+                for line_num, line in enumerate(lines):
+                    try:
+                        data = json.loads(line)
+                        
+                        # Check different possible structures
+                        
+                        # 1. Original structure: 'runs' key (line 3)
+                        if 'runs' in data:
+                            for run in data.get('runs', []):
+                                run_id = run.get('run_id')
+                                if run_id and run_id.startswith(prefix):
+                                    run_ids.add(run_id)
+                        
+                        # 2. New structure: 'evaluations' key (line 4)
+                        if 'evaluations' in data:
+                            for eval_item in data.get('evaluations', []):
+                                # The run_id might be directly in the evaluation item
+                                # or nested within it
+                                run_id = eval_item.get('run_id')
+                                if run_id and run_id.startswith(prefix):
+                                    run_ids.add(run_id)
+                                
+                                # Check if run_id is nested deeper
+                                if isinstance(eval_item, dict):
+                                    for key, value in eval_item.items():
+                                        if key == 'run_id' and isinstance(value, str) and value.startswith(prefix):
+                                            run_ids.add(value)
+                        
+                        # 3. Check any other list structures that might contain run_ids
+                        for key, value in data.items():
+                            if isinstance(value, list):
+                                for item in value:
+                                    if isinstance(item, dict) and 'run_id' in item:
+                                        run_id = item.get('run_id')
+                                        if run_id and run_id.startswith(prefix):
+                                            run_ids.add(run_id)
+                                            
+                    except json.JSONDecodeError:
+                        continue
+                        
+        except (FileNotFoundError, IOError):
             continue
+    
     return sorted(list(run_ids))
 
 def extract_metrics(df):
@@ -121,10 +162,10 @@ def extract_metrics(df):
     print(f"Successfully extracted metrics from {len(extracted_rows)} rows.")
     return pd.DataFrame(extracted_rows)
 
-# --- Plotting and Analysis Functions from Notebook ---
+# --- Plotting and Analysis Functions ---
 
 def create_comprehensive_metric_plots(df_metrics, metric_name, save_dir=None):
-    """Create and save a 4-panel plot for a single metric."""
+    """Create and save a 4-panel plot for a single metric with fixed formatting."""
     if metric_name not in df_metrics.columns:
         print(f"Metric '{metric_name}' not found.")
         return
@@ -140,10 +181,13 @@ def create_comprehensive_metric_plots(df_metrics, metric_name, save_dir=None):
     # 1. Box plot
     ax1 = axes[0, 0]
     box_data = [df_metrics[df_metrics['round'] == r][metric_name].dropna() for r in rounds]
-    bp = ax1.boxplot(box_data, labels=rounds, patch_artist=True, medianprops=dict(color='black'))
+    bp = ax1.boxplot(box_data, patch_artist=True, medianprops=dict(color='black'))
     colors = plt.cm.viridis(np.linspace(0, 1, len(rounds)))
     for patch, color in zip(bp['boxes'], colors):
         patch.set_facecolor(color)
+    
+    ax1.set_xticks(range(1, len(rounds) + 1))
+    ax1.set_xticklabels([f'R{r}' for r in rounds], rotation=45)
     ax1.set_title('Distribution by Round', fontweight='bold')
     ax1.set_xlabel('Round')
     ax1.set_ylabel(metric_name.replace("_", " ").title())
@@ -171,17 +215,22 @@ def create_comprehensive_metric_plots(df_metrics, metric_name, save_dir=None):
             sns.kdeplot(round_data, ax=ax3, label=f'Round {round_num}', color=colors[i], fill=True, alpha=0.3)
     ax3.set_title('Distribution Shape by Round (KDE)', fontweight='bold')
     ax3.set_xlabel(metric_name.replace("_", " ").title())
-    ax3.legend()
+    ax3.set_ylabel('Density')
+    # Add a text annotation instead of a legend
+    ax3.text(0.02, 0.98, f'Colors: Round {rounds[0]} (purple) → Round {rounds[-1]} (yellow)', 
+            transform=ax3.transAxes, verticalalignment='top', fontsize=10,
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
     ax3.grid(True, alpha=0.3)
 
-    # 4. Bar plot with error bars
+    # 4. Bar plot
     ax4 = axes[1, 1]
     x_pos = np.arange(len(round_stats))
     ax4.bar(x_pos, round_stats['mean'], yerr=round_stats['std'], capsize=5, alpha=0.7, color=colors)
     ax4.set_title('Mean ± Standard Deviation by Round', fontweight='bold')
     ax4.set_xlabel('Round')
     ax4.set_xticks(x_pos)
-    ax4.set_xticklabels([f'R{r}' for r in round_stats.index])
+    ax4.set_xticklabels([f'R{r}' for r in round_stats.index], rotation=45)
+    ax4.set_ylabel(metric_name.replace("_", " ").title())
     ax4.grid(True, alpha=0.3, axis='y')
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
@@ -203,48 +252,70 @@ def analyze_all_metrics_individually(df_metrics, save_dir=None):
         print(f"\n--- Analyzing: {metric} ---")
         create_comprehensive_metric_plots(df_metrics, metric, save_dir=save_dir)
 
-# --- Main Execution ---
-
-def main():
-    """Main function to run the complete analysis and save all artifacts."""
-    print(f"Starting analysis for runs with prefix: '{RUN_PREFIX}'")
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+def process_single_prefix(run_prefix, users_dir, script_dir):
+    """Process a single run prefix and generate all analysis outputs."""
+    print(f"\n{'='*60}")
+    print(f"Starting analysis for runs with prefix: '{run_prefix}'")
+    print(f"{'='*60}")
+    
+    output_dir = os.path.join(script_dir, f"outputs/{run_prefix}_final_analysis/")
+    os.makedirs(output_dir, exist_ok=True)
 
     # Load and filter data
-    analyzer = RoundAnalyzer(users_directory=USERS_DIR)
+    analyzer = RoundAnalyzer(users_directory=users_dir)
     df_raw = analyzer.analyze_all_users()
     if df_raw.empty:
-        print("No data loaded. Exiting.")
+        print(f"No data loaded for prefix '{run_prefix}'. Skipping.")
         return
 
-    matching_run_ids = find_run_ids(USERS_DIR, RUN_PREFIX)
+    matching_run_ids = find_run_ids(users_dir, run_prefix)
     if not matching_run_ids:
-        print("No matching run IDs found. Exiting.")
+        print(f"No matching run IDs found for prefix '{run_prefix}'. Skipping.")
         return
-    print(f"Found {len(matching_run_ids)} matching runs.")
+    print(f"Found {len(matching_run_ids)} matching runs for prefix '{run_prefix}'.")
     
     df_filtered = df_raw[df_raw['run_id'].isin(matching_run_ids)]
     if df_filtered.empty:
-        print("No data for the specified run IDs. Exiting.")
+        print(f"No data for the specified run IDs with prefix '{run_prefix}'. Skipping.")
         return
 
     # Extract metrics
     df_metrics = extract_metrics(df_filtered)
-    df_metrics_path = os.path.join(OUTPUT_DIR, 'extracted_metrics.csv')
+    df_metrics_path = os.path.join(output_dir, 'extracted_metrics.csv')
     df_metrics.to_csv(df_metrics_path, index=False)
     print(f"Saved extracted metrics to {df_metrics_path}")
 
     # Generate and save tables
     numeric_df = df_metrics.select_dtypes(include=np.number)
     aggregated_results = numeric_df.groupby('round').agg(['mean', 'std', 'count']).round(4)
-    agg_path = os.path.join(OUTPUT_DIR, 'aggregated_round_statistics.csv')
+    agg_path = os.path.join(output_dir, 'aggregated_round_statistics.csv')
     aggregated_results.to_csv(agg_path)
     print(f"Saved aggregated statistics to {agg_path}")
 
     # Run the comprehensive individual analysis
-    analyze_all_metrics_individually(df_metrics, save_dir=OUTPUT_DIR)
+    analyze_all_metrics_individually(df_metrics, save_dir=output_dir)
     
-    print(f"\n✅ All analyses complete. Results are saved in the '{OUTPUT_DIR}' folder.")
+    print(f"\n✅ Analysis complete for prefix '{run_prefix}'. Results are saved in '{output_dir}'")
+
+# --- Main Execution ---
+
+def main():
+    """Main function to run the complete analysis for all prefixes and save all artifacts."""
+    
+    print(f"Starting comprehensive analysis for {len(RUN_PREFIXS)} run prefixes:")
+    for prefix in RUN_PREFIXS:
+        print(f"  - {prefix}")
+    
+    # Process each prefix individually
+    for run_prefix in RUN_PREFIXS:
+        try:
+            process_single_prefix(run_prefix, USERS_DIR, script_dir)
+        except Exception as e:
+            print(f"❌ Error processing prefix '{run_prefix}': {e}")
+            continue
+    
+    print(f"\n🎉 All analyses complete! Processed {len(RUN_PREFIXS)} run prefixes.")
+    print("Results are saved in their respective output directories under 'outputs/'")
 
 if __name__ == "__main__":
     main()

@@ -1,8 +1,8 @@
 experiment:
-  run_name_prefix: '2025_07_16_mac7' # None für Datumscode als Experimentnamen
-  users_dict: "data/filtered_users_without_links_meta/filtered_users_without_links" 
+  run_name_prefix: 'run_r50_rouge_1' # None für Datumscode als Experimentnamen
+  users_dict: "data/restore" 
   number_of_users: 24 #None to process all
-  number_of_rounds: 100 # How often the modell reflects on its results
+  number_of_rounds: 50 # How often the modell reflects on its results
   num_stimuli_to_process: 6 # Anzahl der Stimuli, die pro Iterration verarbeitet werden sollen, None für alle
 
   #async settings
@@ -12,11 +12,11 @@ experiment:
 evaluation:
   metrics:
     - rouge
-    - bleu
-    - perplexity
-    - bertscore
-    - llm_evaluation
-
+    # - bertscore 
+    # - perplexity
+    # - bleu  
+    # - llm_evaluation
+    # - rouge
 
 llm:
   persona_model: "google" # Modell für die Persona-Generierung
