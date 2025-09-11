@@ -102,13 +102,95 @@ Return: <output>"""
     Justification: [text]
     """
 
+    imitation_post_template_no_persona = """Fill in the [MASKED] words in the tweet below to create a natural and coherent message:
+
+Original Tweet: {tweet}
+
+Instructions:
+- Replace each [MASKED] token with words that make the sentence flow naturally
+- Maintain the original tweet's structure and meaning
+- Use clear, appropriate language for social media
+- Ensure the completed tweet reads as a normal social media post
+
+Completed Tweet:"""
+
+    imitation_replies_template_no_persona = """Write a natural reply to the following tweet:
+
+Tweet to reply to: {tweet}
+
+Instructions:
+- Write a relevant and appropriate reply to this content
+- Keep the response length suitable for social media
+- Make it conversational and engaging
+- Ensure the reply feels authentic and natural
+
+Reply:"""
+
+    # GENERIC-PERSONA Templates (minimal, universal persona)
+    imitation_post_template_generic = """You are a typical social media user who communicates naturally online. Fill in the [MASKED] words in the tweet below to match a natural social media communication style.
+
+Persona: You are an active social media user who writes posts and replies in a conversational, authentic way. You engage with various topics and express yourself clearly and naturally online.
+
+Original Tweet: {tweet}
+
+Instructions:
+- Replace each [MASKED] token with words that reflect natural social media communication
+- Maintain the original tweet's structure and meaning
+- Use vocabulary and tone typical for social media posts
+- Keep the style conversational and authentic
+
+Completed Tweet:"""
+
+    imitation_replies_template_generic = """You are a typical social media user who communicates naturally online. Write a reply that matches natural social media engagement patterns.
+
+Persona: You are an active social media user who writes posts and replies in a conversational, authentic way. You engage with various topics and express yourself clearly and naturally online.
+
+Tweet to reply to: {tweet}
+
+Instructions:
+- Write a reply that reflects natural social media communication
+- Match typical social media tone and engagement style
+- Consider how people generally respond to this type of content
+- Keep the response length appropriate for social media
+- Ensure the reply feels genuine and conversational
+
+Reply:"""
+    imitation_post_template_no_persona = """You are completing a social media post. Fill in the [MASKED] words in the tweet below to complete it naturally.
+
+    Original Tweet: {tweet}
+
+    Instructions:
+    - Replace each [MASKED] token with appropriate words
+    - Maintain the original tweet's structure and meaning
+    - Write naturally and authentically
+    - Keep the tone consistent
+
+    Completed Tweet:"""
+
+    imitation_replies_template_no_persona = """You are responding to a social media post. Write a natural reply to the tweet below.
+
+Tweet to reply to: {tweet}
+
+Instructions:
+- Write a natural reply that someone would post
+- Keep the response length appropriate for social media
+- Write authentically and conversationally
+
+Reply:"""
+
     templates = {
         "persona_template_simple": persona_template_simple,
         "imitation_post_template_simple": imitation_post_template_simple,
         "imitation_replies_template_simple": imitation_replies_template_simple,
         "mask_opinion_template": mask_opinion_template,
         "reflect_results_template": reflect_results_template,
-        "llm_evaluation_template": llm_evaluation_template
+        "llm_evaluation_template": llm_evaluation_template,
+        "imitation_post_template_no_persona": imitation_post_template_no_persona,
+        "imitation_replies_template_no_persona": imitation_replies_template_no_persona,
+        "imitation_post_template_generic": imitation_post_template_generic,
+        "imitation_replies_template_generic": imitation_replies_template_generic,
+        "imitation_post_template_no_persona": imitation_post_template_no_persona,
+        "imitation_replies_template_no_persona": imitation_replies_template_no_persona
     }
     
     if template_name in templates:
