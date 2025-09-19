@@ -1,2 +1,3 @@
 # MIMIC 
-## Model for Imitating Media Interaction and Character
+## Method for Imitating Media Interaction and Character
+

@@ -1,0 +1,31 @@
+# baseline_config.yaml
+
+experiment:
+  run_name_prefix: 'baseline_'
+  users_dict: "/Users/christophhau/Desktop/HA_Projekt/MIMIC/MIMIC/restore"
+  number_of_users: 24  # Start small, then 24 for full experiment
+  num_stimuli_to_process: 50  
+  number_of_rounds: 1  # Not used but some shared functions might check
+  use_async: false  # Simplified for debugging
+  num_workers: 1  # Single-threaded for debugging
+
+evaluation:
+  metrics:
+    - bertscore
+    - bleu
+    - rouge
+
+llm:
+  persona_model: "google"  # Used in create_initial_persona()
+  imitation_model: "ollama"  # Used in process_single_baseline_stimulus()
+  ollama_model: "gemma3:latest"  # Used by call_ai()
+  # Not used by baselines but may be referenced by shared functions
+  reflection_model: "google_json"
+
+templates:
+  persona_template: "persona_template_simple"  # Used in create_initial_persona()
+  # Not directly used by baseline_experiments.py but referenced in baseline_conditions
+  imitation_post_template: "imitation_post_template_simple"
+  imitation_reply_template: "imitation_replies_template_simple"
+  # Not used but may be referenced
+  reflection_template: "reflect_results_template"
