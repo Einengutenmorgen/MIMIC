@@ -64,7 +64,7 @@ The framework demonstrates consistent performance improvements across all tested
 Comparison against four baseline conditions revealed task-specific patterns:
 
 ![Baseline Comparison reply](results/Graphics/figure_4_reply_metrics.png)
-![Baseline Comparison posts](results/Graphics/figure_2_posts_comparison.png)
+![Baseline Comparison posts](results/Graphics/figure_post_metrics.png)
 
 
 **Unexpected Findings:**
