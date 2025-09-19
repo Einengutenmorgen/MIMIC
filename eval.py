@@ -5,10 +5,37 @@ from llm import call_ai
 import re
 from templates import format_template
 
-# Load the configuration
-with open("config.yaml", "r") as f:
-    config = yaml.safe_load(f)
+import yaml
+import os # Wird für die Alternative benötigt
 
+# Definiere die Pfade an einer Stelle
+config_path_1 = "config.yaml"
+config_path_2 = "baseline_config.yaml"
+config = None
+try:
+    # Versuche, die erste Konfigurationsdatei zu laden
+    with open(config_path_1, "r") as f:
+        config = yaml.safe_load(f)
+    print(f"Konfiguration erfolgreich aus '{config_path_1}' geladen.")
+
+except FileNotFoundError:
+    # Wenn die erste Datei nicht gefunden wird, versuche die zweite
+    print(f"'{config_path_1}' nicht gefunden. Versuche alternativen Pfad...")
+    try:
+        with open(config_path_2, "r") as f:
+            config = yaml.safe_load(f)
+        print(f"Konfiguration erfolgreich aus '{config_path_2}' geladen.")
+    except FileNotFoundError:
+        # Wenn auch die zweite nicht gefunden wird, gib eine Fehlermeldung aus
+        print(f"FEHLER: Auch die alternative Konfigurationsdatei '{config_path_2}' konnte nicht gefunden werden.")
+    except Exception as e:
+        # Fängt andere Fehler beim Laden der zweiten Datei ab (z.B. YAML-Syntaxfehler)
+        print(f"Fehler beim Laden von '{config_path_2}': {e}")
+
+except Exception as e:
+    # Fängt andere Fehler beim Laden der ersten Datei ab (z.B. YAML-Syntaxfehler)
+    print(f"Fehler beim Laden von '{config_path_1}': {e}")
+        
 # Get evaluation metrics from correct config path
 evaluation_config = config.get("evaluation", {})
 evaluation_metrics = evaluation_config.get("metrics", [])

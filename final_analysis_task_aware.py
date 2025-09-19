@@ -14,16 +14,22 @@ import re
 
 warnings.filterwarnings('ignore')
 
-# --- Configuration ---
-RUN_PREFIXS = ['baseline_no_persona_20250911_155619', 'baseline_generic_20250911_155619', 'baseline_history_only_20250911_155619', 'baseline_best_persona_20250911_155619']
+from sentence_transformers import SentenceTransformer, util
+# Laden Sie ein vortrainiertes Modell. Dies geschieht nur einmal.
+semantic_model = SentenceTransformer('all-MiniLM-L6-v2')
+print("SentenceTransformer-Modell erfolgreich geladen.")
 
+# --- Configuration ---
+RUN_PREFIXS = ['baseline__no_persona_20250912_160228', 'baseline__generic_20250912_160228', 'baseline__history_only_20250912_160228', 'baseline__best_persona_20250912_160228']
+
+#RUN_PREFIXS = ["run_r50_all_metrics", "run_r50_bertscore", "run_r50_bleu_only", "run_r50_perplexity_only", "run_r50_rouge_1"]
 # Assuming __file__ exists. If running interactively, define script_dir manually.
 try:
     script_dir = os.path.dirname(os.path.abspath(__file__))
 except NameError:
     script_dir = os.getcwd()
 
-USERS_DIR = os.path.join(script_dir, "data/filtered_users_without_links_meta/filtered_users_without_links")
+USERS_DIR = "/Users/christophhau/Desktop/HA_Projekt/MIMIC/MIMIC/restore"
 
 # --- Helper Functions ---
 
@@ -136,7 +142,7 @@ def determine_task_type(tweet_id, tweets_data):
         if tweet.get('tweet_id') == tweet_id:
             reply_to_id = tweet.get('reply_to_id')
             return 'post' if reply_to_id is None else 'reply'
-    return 'unknown'  # Fallback
+    
 
 def extract_masked_tokens(text, prediction, reference):
     """
@@ -157,26 +163,55 @@ def extract_masked_tokens(text, prediction, reference):
 
 def calculate_semantic_similarity(text1, text2):
     """
-    Calculate semantic similarity between two texts.
-    Simple implementation using word overlap (Jaccard similarity).
-
-    :param text1: First text
-    :param text2: Second text
-    :return: Similarity score between 0 and 1
+    Berechnet die echte semantische Ähnlichkeit mit SentenceTransformer.
     """
-    if not text1 or not text2:
+    if not semantic_model or not text1 or not text2:
+        return 0.0
+    try:
+        embedding1 = semantic_model.encode(text1, convert_to_tensor=True)
+        embedding2 = semantic_model.encode(text2, convert_to_tensor=True)
+        cosine_score = util.pytorch_cos_sim(embedding1, embedding2)
+        return cosine_score.item()
+    except Exception as e:
+        print(f"Warning: Konnte semantische Ähnlichkeit nicht berechnen: {e}")
         return 0.0
 
-    words1 = set(text1.lower().split())
-    words2 = set(text2.lower().split())
+def compute_missing_post_metrics(individual_scores, user_tweets):
+    """
+    Computes missing semantic similarity for posts if it wasn't logged.
+    """
+    computed_results = {}
+    
+    # Create tweet lookup for masked text
+    tweet_lookup = {tweet.get('tweet_id'): tweet for tweet in user_tweets}
 
-    if len(words1) == 0 and len(words2) == 0:
-        return 1.0
+    for i, score in enumerate(individual_scores):
+        # Check if this metric is already present
+        if 'semantic_similarity' in score:
+            continue
 
-    intersection = words1.intersection(words2)
-    union = words1.union(words2)
+        tweet_id = score.get('tweet_id')
+        task_type = determine_task_type(tweet_id, user_tweets)
+        
+        if task_type != 'post':
+            continue
 
-    return len(intersection) / len(union) if len(union) > 0 else 0.0
+        prediction = score.get('prediction', '')
+        reference = score.get('reference', '')
+        
+        if not prediction or not reference:
+            continue
+
+        # Get original masked text to clean prediction
+        tweet_data = tweet_lookup.get(tweet_id, {})
+        masked_text = tweet_data.get('masked_text', '')
+        pred_tokens, ref_tokens = extract_masked_tokens(masked_text, prediction, reference)
+
+        # Calculate the semantic similarity
+        similarity = calculate_semantic_similarity(pred_tokens, ref_tokens)
+        computed_results[i] = {'computed_semantic_similarity': similarity}
+        
+    return computed_results
 
 def calculate_masked_token_metrics(individual_scores, tweets_data):
     """
@@ -221,7 +256,13 @@ def calculate_masked_token_metrics(individual_scores, tweets_data):
             exact_matches += 1
 
         # 2. Semantic similarity on extracted tokens/strings
-        semantic_sim = calculate_semantic_similarity(pred_tokens, ref_tokens)
+        # --- KORREKTUR: This uses the new function now. Also check if value is pre-computed ---
+        if 'semantic_similarity' in score:
+            semantic_sim = score['semantic_similarity']
+        else:
+             # Fallback if computation failed before
+            semantic_sim = calculate_semantic_similarity(pred_tokens, ref_tokens)
+
         semantic_scores.append(semantic_sim)
 
         # 3. Content accuracy (high semantic similarity threshold)
@@ -380,140 +421,80 @@ def extract_metrics_task_aware(df, tweets_data_map):
                 'run_id': row['run_id'], 'timestamp': row['timestamp']
             }
 
-            # Get tweets data for this user
             user_tweets = tweets_data_map.get(row['user_id'], [])
+            individual_scores = row.get('individual_scores', [])
+
             if not user_tweets:
-                print(f"Warning: No tweet data found for user {row['user_id']}")
+                print(f"Warning: No tweet data for user {row['user_id']}")
+            if not isinstance(individual_scores, list):
+                continue
+                
+            # --- NEUE LOGIK: Zuerst fehlende Metriken berechnen und integrieren ---
+            computed_reply_metrics = compute_missing_reply_metrics(individual_scores, user_tweets, row['run_id'])
+            computed_post_metrics = compute_missing_post_metrics(individual_scores, user_tweets)
 
-            # Separate individual scores by task type
-            if isinstance(row['individual_scores'], list):
-                posts_scores = []
-                replies_scores = []
+            for i, score in enumerate(individual_scores):
+                if i in computed_reply_metrics:
+                    # Füge berechnete Metriken zu 'individual_scores' hinzu
+                    score.update(computed_reply_metrics[i])
+                if i in computed_post_metrics:
+                    score['semantic_similarity'] = computed_post_metrics[i]['computed_semantic_similarity']
 
-                for score in row['individual_scores']:
-                    if isinstance(score, dict) and 'tweet_id' in score:
-                        tweet_id = score['tweet_id']
-                        task_type = determine_task_type(tweet_id, user_tweets)
+            # --- Alte Logik mit nun vervollständigten Daten ---
+            posts_scores = []
+            replies_scores = []
+            for score in individual_scores:
+                if isinstance(score, dict) and 'tweet_id' in score:
+                    task_type = determine_task_type(score['tweet_id'], user_tweets)
+                    if task_type == 'post':
+                        posts_scores.append(score)
+                    elif task_type == 'reply':
+                        replies_scores.append(score)
 
-                        if task_type == 'post':
-                            posts_scores.append(score)
-                        elif task_type == 'reply':
-                            replies_scores.append(score)
-
-                # Calculate metrics for posts (enhanced masked token evaluation)
-                if posts_scores:
-                    post_metrics = calculate_masked_token_metrics(posts_scores, user_tweets)
-                    base_row.update({
-                        'posts_exact_match_rate': post_metrics['exact_match_rate'],
-                        'posts_semantic_similarity': post_metrics['semantic_similarity_mean'],
-                        'posts_content_accuracy': post_metrics['content_accuracy'],
-                        'posts_format_compliance': post_metrics['format_compliance'],
-                        'posts_exact_matches': post_metrics['exact_matches'],
-                        'posts_total_samples': post_metrics['total_samples']
-                    })
-
-                # Calculate metrics for replies (traditional NLG metrics + computed missing metrics)
-                if replies_scores:
-                    # Compute missing metrics for limited-metric runs
-                    computed_metrics = compute_missing_reply_metrics(
-                        replies_scores, user_tweets, row['run_id']
-                    )
-
-                    # --- Data extraction loop ---
-                    # Collect original metrics from score data structure
-                    orig_rouge_scores = []
-                    orig_bleu_scores = []
-                    orig_combined_scores = []
-                    orig_perp_scores = []
-                    orig_bertscore_scores = [] # Assuming bertscore might be present in 'all_metrics' runs
-
-                    # Collect newly computed metrics separately
-                    computed_rouge_scores = []
-                    computed_bleu_scores = []
-                    computed_perp_scores = []
-                    computed_bertscore_scores = []
-
-                    for i, score in enumerate(replies_scores):
-                        # Original metrics from 'individual_scores' field
-                        if 'rouge' in score and isinstance(score['rouge'], dict):
-                            orig_rouge_scores.append(score['rouge'].get('rouge1', np.nan))
-                        if 'bleu' in score and isinstance(score['bleu'], dict):
-                            orig_bleu_scores.append(score['bleu'].get('bleu', np.nan))
-                        if 'combined_score' in score:
-                            orig_combined_scores.append(score.get('combined_score', np.nan))
-                        if 'perplexity' in score and isinstance(score['perplexity'], dict):
-                            orig_perp_scores.append(score['perplexity'].get('mean_perplexity', np.nan))
-                        if 'bertscore' in score and isinstance(score['bertscore'], dict):
-                            orig_bertscore_scores.append(score['bertscore'].get('f1', np.nan))
-
-                        # Computed metrics (fill in missing ones)
-                        if i in computed_metrics:
-                            comp_metrics = computed_metrics[i]
-                            if 'computed_rouge' in comp_metrics:
-                                computed_rouge_scores.append(comp_metrics['computed_rouge'].get('rouge1', np.nan))
-                            if 'computed_bleu' in comp_metrics:
-                                computed_bleu_scores.append(comp_metrics['computed_bleu'].get('bleu', np.nan))
-                            if 'computed_perplexity' in comp_metrics:
-                                computed_perp_scores.append(comp_metrics.get('computed_perplexity', np.nan))
-                            if 'computed_bertscore' in comp_metrics:
-                                computed_bertscore_scores.append(comp_metrics['computed_bertscore'].get('f1', np.nan))
-
-                    # --- Consolidation logic ---
-                    # Use original metrics if available, otherwise use computed metrics.
-                    # This ensures runs like "run_r50_all_metrics" use their original data,
-                    # while runs like "run_r50_bleu_only" get populated with computed ROUGE, etc.
-                    final_rouge_scores = orig_rouge_scores if orig_rouge_scores else computed_rouge_scores
-                    final_bleu_scores = orig_bleu_scores if orig_bleu_scores else computed_bleu_scores
-                    final_perp_scores = orig_perp_scores if orig_perp_scores else computed_perp_scores
-                    final_bertscore_scores = orig_bertscore_scores if orig_bertscore_scores else computed_bertscore_scores
-
-                    # Add reply metrics to base_row, checking if list is non-empty before calculating mean
-                    if final_rouge_scores:
-                        base_row['replies_mean_rouge1'] = np.nanmean(final_rouge_scores)
-                    if final_bleu_scores:
-                        base_row['replies_mean_bleu'] = np.nanmean(final_bleu_scores)
-                    if final_perp_scores:
-                        base_row['replies_mean_perplexity'] = np.nanmean(final_perp_scores)
-                    if final_bertscore_scores:
-                        base_row['replies_mean_bertscore_f1'] = np.nanmean(final_bertscore_scores)
-
-                    # Combined scores logic
-                    if orig_combined_scores:
-                        base_row['replies_mean_combined'] = np.nanmean(orig_combined_scores)
-                        base_row['replies_std_combined'] = np.nanstd(orig_combined_scores)
-                        base_row['replies_total_samples'] = len(orig_combined_scores)
-                    elif final_rouge_scores and final_bleu_scores:
-                        # Re-calculate combined score if original wasn't present but components are
-                        # Ensure lists have the same length for zip operation
-                        min_len = min(len(final_rouge_scores), len(final_bleu_scores))
-                        computed_combined = [
-                            (r * 0.5 + b * 0.5) for r, b in zip(final_rouge_scores[:min_len], final_bleu_scores[:min_len])
-                            if not np.isnan(r) and not np.isnan(b)
-                        ]
-                        if computed_combined:
-                            base_row['replies_mean_combined'] = np.mean(computed_combined)
-                            base_row['replies_std_combined'] = np.std(computed_combined)
-                            base_row['replies_total_samples'] = len(computed_combined)
-
-            # Add overall statistics (keeping existing for compatibility)
-            if isinstance(row['statistics'], dict):
-                stats_dict = row['statistics']
+            # Metriken für Posts berechnen
+            if posts_scores:
+                post_metrics = calculate_masked_token_metrics(posts_scores, user_tweets)
                 base_row.update({
-                    'overall_mean_combined_score': stats_dict.get('mean_combined_score', np.nan),
-                    'overall_std_combined_score': stats_dict.get('std_combined_score', np.nan),
-                    'overall_best_score': stats_dict.get('best_score', np.nan),
-                    'overall_worst_score': stats_dict.get('worst_score', np.nan)
+                    'posts_exact_match_rate': post_metrics['exact_match_rate'],
+                    'posts_semantic_similarity': post_metrics['semantic_similarity_mean'],
+                    'posts_content_accuracy': post_metrics['content_accuracy'],
+                    'posts_format_compliance': post_metrics['format_compliance'],
+                    'posts_exact_matches': post_metrics['exact_matches'],
+                    'posts_total_samples': post_metrics['total_samples']
                 })
+            
+            # Metriken für Replies extrahieren
+            if replies_scores:
+                rouge_scores = [s['rouge'].get('rouge1', np.nan) for s in replies_scores if 'rouge' in s and isinstance(s.get('rouge'), dict)]
+                if not rouge_scores: # Fallback auf berechnete Werte
+                     rouge_scores = [s['computed_rouge'].get('rouge1', np.nan) for s in replies_scores if 'computed_rouge' in s and isinstance(s.get('computed_rouge'), dict)]
+                
+                bleu_scores = [s['bleu'].get('bleu', np.nan) for s in replies_scores if 'bleu' in s and isinstance(s.get('bleu'), dict)]
+                if not bleu_scores:
+                    bleu_scores = [s['computed_bleu'].get('bleu', np.nan) for s in replies_scores if 'computed_bleu' in s and isinstance(s.get('computed_bleu'), dict)]
 
+                perp_scores = [s['perplexity'].get('mean_perplexity', np.nan) for s in replies_scores if 'perplexity' in s and isinstance(s.get('perplexity'), dict)]
+                if not perp_scores:
+                     perp_scores = [s.get('computed_perplexity', np.nan) for s in replies_scores if 'computed_perplexity' in s]
+                
+                bert_scores = [s['bertscore'].get('f1', np.nan) for s in replies_scores if 'bertscore' in s and isinstance(s.get('bertscore'), dict)]
+                if not bert_scores:
+                    bert_scores = [s['computed_bertscore'].get('f1', np.nan) for s in replies_scores if 'computed_bertscore' in s and isinstance(s.get('computed_bertscore'), dict)]
+
+                if rouge_scores: base_row['replies_mean_rouge1'] = np.nanmean(rouge_scores)
+                if bleu_scores: base_row['replies_mean_bleu'] = np.nanmean(bleu_scores)
+                if perp_scores: base_row['replies_mean_perplexity'] = np.nanmean(perp_scores)
+                if bert_scores: base_row['replies_mean_bertscore_f1'] = np.nanmean(bert_scores)
+                
             extracted_rows.append(base_row)
 
         except Exception as e:
             print(f"Error processing row {idx}: {e}")
-            # Optionally re-raise to stop execution: raise e
 
     print(f"Successfully extracted task-aware metrics from {len(extracted_rows)} rows.")
     return pd.DataFrame(extracted_rows)
 
+          
 def create_task_aware_plots(df_metrics, save_dir=None):
     """
     Create separate plots for posts and replies with appropriate metrics.
@@ -868,6 +849,89 @@ def perform_statistical_analysis(df, save_dir):
         
     print("✅ Statistical analysis saved.")
 
+# FÜGE DIESE FUNKTION ZU DEINEN HELPER FUNCTIONS HINZU
+
+def load_all_user_data_flexibly(users_directory: str) -> pd.DataFrame:
+    """
+    Liest die Daten aller User flexibel ein, ohne den fehlerhaften RoundAnalyzer zu verwenden.
+    Diese Funktion durchsucht alle Zeilen und verarbeitet auch run_ids ohne '_round_'.
+    """
+    print("Loading data with custom flexible loader (bypassing RoundAnalyzer)...")
+    all_results = []
+    
+    user_files = [f for f in os.listdir(users_directory) if f.endswith('.jsonl')]
+    if not user_files:
+        print(f"Warning: No .jsonl files found in {users_directory}")
+        return pd.DataFrame()
+
+    for user_file in user_files:
+        file_path = os.path.join(users_directory, user_file)
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+
+            # Extrahieren der User-ID (normalerweise erste Zeile)
+            user_id = json.loads(lines[0]).get('user_id') if lines else None
+            if not user_id:
+                continue
+
+            # Sammle alle 'runs' und 'evaluations' aus der gesamten Datei
+            runs_data = []
+            evaluations_data = []
+            for line in lines:
+                try:
+                    data = json.loads(line)
+                    if isinstance(data, dict):
+                        if 'runs' in data:
+                            runs_data.extend(data.get('runs', []))
+                        if 'evaluations' in data:
+                            evaluations_data.extend(data.get('evaluations', []))
+                except json.JSONDecodeError:
+                    continue
+
+            # Maps erstellen
+            eval_results_map = {
+                e.get('run_id'): e.get('evaluation_results', {})
+                for e in evaluations_data if e.get('run_id')
+            }
+            runs_map = {
+                r.get('run_id'): r
+                for r in runs_data if r.get('run_id')
+            }
+
+            all_run_ids = set(runs_map.keys()) | set(eval_results_map.keys())
+
+            for run_id in all_run_ids:
+                eval_results = eval_results_map.get(run_id)
+                if eval_results is None:
+                    continue # Nur Einträge mit Evaluationsergebnissen verarbeiten
+
+                run_entry = runs_map.get(run_id, {})
+                round_num = 0
+                if '_round_' in run_id:
+                    try:
+                        round_num = int(run_id.split('_round_')[1])
+                    except (ValueError, IndexError):
+                        pass # Bleibt bei 0, wenn Parsen fehlschlägt
+
+                result_row = {
+                    'user_id': user_id,
+                    'round': round_num,
+                    'run_id': run_id,
+                    'timestamp': run_entry.get('timestamp'),
+                    'statistics': eval_results.get('statistics', {}),
+                    'overall': eval_results.get('overall', {}),
+                    'individual_scores': eval_results.get('individual_scores', [])
+                }
+                all_results.append(result_row)
+
+        except Exception as e:
+            print(f"Error processing file {file_path}: {e}")
+            continue
+            
+    print(f"Successfully loaded data for {len(all_results)} evaluations from {len(user_files)} users.")
+    return pd.DataFrame(all_results)
+
 # --- Main Execution ---
 
 # def main():
@@ -890,6 +954,8 @@ def perform_statistical_analysis(df, save_dir):
 #     print(f"\n🎉 All analyses complete! Processed {len(RUN_PREFIXS)} run prefixes.")
 #     print("Results are saved in their respective output directories under 'results/'")
 
+
+
 # In final_analysis_task_aware.py
 def main():
     """Main function to run a comparative analysis for all baseline prefixes."""
@@ -897,19 +963,47 @@ def main():
 
     all_metrics_dfs = []
     tweets_data_map = load_tweets_data_map(USERS_DIR)
-    analyzer = RoundAnalyzer(users_directory=USERS_DIR)
-    df_raw = analyzer.analyze_all_users()
+    #analyzer = RoundAnalyzer(users_directory=USERS_DIR)
+    #df_raw = analyzer.analyze_all_users()
+    df_raw = load_all_user_data_flexibly(USERS_DIR)
 
+    # ================================================================= #
+    # VORLÄUFIGER DEBUG-CODE: HIER EINFÜGEN                           #
+    # ================================================================= #
+    print("\n\n--- DEBUGGING df_raw ---")
+    if df_raw.empty:
+        print("🛑 FEHLER: Das vom RoundAnalyzer geladene DataFrame 'df_raw' ist komplett leer!")
+    else:
+        print(f"✅ Total rows loaded by RoundAnalyzer: {len(df_raw)}")
+        print(f"Columns found in df_raw: {df_raw.columns.tolist()}")
+        
+        if 'run_id' in df_raw.columns:
+            print("\nUnique run_ids found in the 'run_id' column:")
+            unique_ids = df_raw['run_id'].unique()
+            print(unique_ids)
+            
+            # Überprüfen, ob einer der Prefixe überhaupt vorkommt
+            found_any = False
+            for prefix in RUN_PREFIXS:
+                if any(str(id).startswith(prefix) for id in unique_ids):
+                    print(f"✔️ Prefix '{prefix}' wurde in den geladenen run_ids gefunden.")
+                    found_any = True
+            if not found_any:
+                print("❌ KEINER der gesuchten Prefixe wurde in den geladenen run_ids gefunden!")
+        else:
+            print("🛑 FEHLER: Die Spalte 'run_id' existiert nicht im DataFrame 'df_raw'!")
+            
+    print("--- END DEBUGGING ---\n\n")
+    # ================================================================= #
+    # ENDE DEBUG-CODE                                                   #
+    # ================================================================= #
     for prefix in RUN_PREFIXS:
         print(f"\n--- Processing prefix: {prefix} ---")
 
-        # Filter the raw data for the current prefix
-        matching_run_ids = find_run_ids(USERS_DIR, prefix)
-        if not matching_run_ids:
-            print(f"Warning: No runs found for prefix '{prefix}'. Skipping.")
-            continue
+        # Filtere das DataFrame direkt mit dem Prefix. Das ist viel einfacher und zuverlässiger.
+        # na=False stellt sicher, dass Zeilen mit fehlenden run_ids keine Fehler verursachen.
+        df_filtered = df_raw[df_raw['run_id'].str.startswith(prefix, na=False)]
 
-        df_filtered = df_raw[df_raw['run_id'].isin(matching_run_ids)]
         if df_filtered.empty:
             print(f"Warning: No data rows for prefix '{prefix}'. Skipping.")
             continue
@@ -934,7 +1028,7 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
     # Save the combined data
-    combined_df.to_csv(os.path.join(output_dir, 'combined_baseline_metrics.csv'), index=False)
+    combined_df.to_csv(os.path.join(output_dir, 'combined_real_baseline_metrics.csv'), index=False)
     print(f"\n✅ Combined metrics saved to {output_dir}")
 
     # --- Call new plotting and analysis functions ---

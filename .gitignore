@@ -11,4 +11,7 @@ output/
 batch_results/
 outputs_Backup/
 results/
-
+batch_results/
+backups/
+baseline_analysis_v3/
+.DS_Store

@@ -1,8 +1,9 @@
 """
-Baseline Experiments Manager V2 - COMPLETED
+Baseline Experiments Manager V2 - NO FALLBACKS VERSION
 
 Scientific Design: IDENTICAL STIMULI across all conditions for maximum statistical power.
 All conditions receive the SAME tweets to eliminate stimulus variance.
+NO FALLBACKS - If it fails, it should fail immediately.
 """
 
 import os
@@ -14,6 +15,7 @@ from typing import Dict, List, Tuple, Any, Optional
 from datetime import datetime
 import concurrent.futures
 import threading
+import yaml
 
 # Import existing infrastructure
 from loader import load_stimulus, get_formatted_user_historie
@@ -37,10 +39,15 @@ class BaselineExperiment:
     2. Generic-Persona: Minimal, universal social media user persona
     3. History-Only: Raw user data without LLM abstraction (tests abstraction effect)
     4. Best-Persona: Optimized persona from iterative rounds (tests optimization effect)
+    
+    NO FALLBACKS: All operations must succeed or fail immediately.
     """
     
-    def __init__(self, data_dir: str = "/Users/christophhau/Desktop/HA_Projekt/MIMIC/MIMIC/data/filtered_users_without_links_meta/filtered_users_without_links"):
+    def __init__(self, data_dir: str):
         self.data_dir = Path(data_dir)
+        if not self.data_dir.exists():
+            raise FileNotFoundError(f"Data directory does not exist: {data_dir}")
+        
         self.cache = get_file_cache()
         self.file_lock = threading.Lock()
         
@@ -56,7 +63,7 @@ class BaselineExperiment:
             "generic_persona": {
                 "name": "Generic-Persona Baseline", 
                 "description": "Minimal universal social media user persona",
-                "post_template": "imitation_post_template_simple",  # Use same templates as individual
+                "post_template": "imitation_post_template_simple",
                 "reply_template": "imitation_replies_template_simple",
                 "persona": "You are an active social media user who writes posts and replies in a conversational, authentic way. You engage with various topics and express yourself clearly and naturally online."
             },
@@ -76,47 +83,35 @@ class BaselineExperiment:
             }
         }
     
-    def create_identical_stimuli_splits(self, user_file_path: str, num_items: int = 50, seed: int = 42) -> Dict[str, List[Tuple]]:
+    def create_identical_stimuli_splits(self, user_file_path: str, num_items: int, seed: int = 42) -> Dict[str, List[Tuple]]:
         """
         Create IDENTICAL stimulus sets for all conditions - OPTIMAL SCIENTIFIC DESIGN.
         
         CRITICAL: All conditions get the SAME stimuli for maximum statistical power.
         This eliminates all stimulus-based variance and allows pure condition comparisons.
         
-        Scientific Rationale:
-        - Eliminates confounding variables (stimulus content, difficulty, length)
-        - Maximizes within-subject statistical power
-        - Enables direct condition comparisons
-        - Follows best practices for controlled experiments
-        
-        Args:
-            user_file_path: Path to user JSONL file
-            num_items: Number of items per condition (default: 50)
-            seed: Random seed for reproducible selection
-            
-        Returns:
-            Dict with condition keys, all containing IDENTICAL stimulus lists
+        NO FALLBACKS: Must have exactly num_items or fail.
         """
+        if not os.path.exists(user_file_path):
+            raise FileNotFoundError(f"User file does not exist: {user_file_path}")
+        
         logger.info(f"Creating IDENTICAL stimulus sets ({num_items} items) for {os.path.basename(user_file_path)}")
         
         # Load all stimuli
         all_stimuli = load_stimulus(user_file_path)
         
         if len(all_stimuli) < num_items:
-            logger.warning(f"Insufficient stimuli in {user_file_path}: {len(all_stimuli)} < {num_items}")
-            selected_stimuli = all_stimuli  # Use all available
-            actual_items = len(all_stimuli)
-        else:
-            # Randomly select num_items for the experiment
-            random.seed(seed)
-            selected_stimuli = random.sample(all_stimuli, num_items)
-            actual_items = num_items
+            raise ValueError(f"Insufficient stimuli in {user_file_path}: {len(all_stimuli)} < {num_items}")
+        
+        # Randomly select exactly num_items for the experiment
+        random.seed(seed)
+        selected_stimuli = random.sample(all_stimuli, num_items)
         
         # Analyze stimulus composition for logging
         posts = [item for item in selected_stimuli if item[1] == True]
         replies = [item for item in selected_stimuli if item[1] == False]
         
-        logger.info(f"Selected {actual_items} IDENTICAL stimuli: {len(posts)} posts, {len(replies)} replies")
+        logger.info(f"Selected {num_items} IDENTICAL stimuli: {len(posts)} posts, {len(replies)} replies")
         
         # CRITICAL: All conditions get IDENTICAL stimuli
         condition_names = ["no_persona", "generic_persona", "history_only", "best_persona"]
@@ -124,7 +119,6 @@ class BaselineExperiment:
         result = {}
         for condition in condition_names:
             result[condition] = selected_stimuli.copy()  # IDENTICAL for all conditions
-            logger.debug(f"Condition {condition}: {len(result[condition])} items (IDENTICAL to all others)")
         
         # Validate identical stimuli across conditions
         first_condition_ids = [item[2] for item in result[condition_names[0]]]  # tweet_ids
@@ -133,7 +127,7 @@ class BaselineExperiment:
             if first_condition_ids != condition_ids:
                 raise ValueError(f"CRITICAL ERROR: Stimuli not identical across conditions!")
         
-        logger.info(f"✅ IDENTICAL STIMULI VALIDATED: All {len(condition_names)} conditions use same {actual_items} items")
+        logger.info(f"✅ IDENTICAL STIMULI VALIDATED: All {len(condition_names)} conditions use same {num_items} items")
         return result
     
     def create_history_only_persona(self, user_file_path: str) -> str:
@@ -142,42 +136,35 @@ class BaselineExperiment:
         
         Tests the hypothesis: Does LLM abstraction improve persona quality?
         
-        Args:
-            user_file_path: Path to user JSONL file
-            
-        Returns:
-            Raw user history formatted as persona string
+        NO FALLBACKS: Must succeed or raise exception.
         """
+        if not os.path.exists(user_file_path):
+            raise FileNotFoundError(f"User file does not exist: {user_file_path}")
+        
         logger.info(f"Creating History-Only persona for {os.path.basename(user_file_path)}")
         
-        try:
-            # Use existing loader to get formatted user history
-            user_history = get_formatted_user_historie(user_file_path)
-            
-            if not user_history or len(user_history) < 100:
-                logger.warning(f"Insufficient user history in {user_file_path}")
-                return "Limited user history available for persona creation."
-            
-            # Format raw history as persona (NO LLM processing - this is the key test)
-            history_persona = self.format_history_for_persona(user_history)
-            
-            logger.debug(f"Created History-Only persona: {len(history_persona)} characters")
-            return history_persona
-            
-        except Exception as e:
-            logger.error(f"Error creating History-Only persona: {e}")
-            return "Error: Could not create History-Only persona from available data."
+        # Use existing loader to get formatted user history
+        user_history = get_formatted_user_historie(user_file_path)
+        
+        if not user_history:
+            raise ValueError(f"No user history found in {user_file_path}")
+        
+        if len(user_history) < 100:
+            raise ValueError(f"Insufficient user history in {user_file_path}: {len(user_history)} characters")
+        
+        # Format raw history as persona (NO LLM processing - this is the key test)
+        history_persona = self.format_history_for_persona(user_history)
+        
+        logger.debug(f"Created History-Only persona: {len(history_persona)} characters")
+        return history_persona
     
     def format_history_for_persona(self, user_history: str) -> str:
         """
         Format raw user history as persona string WITHOUT LLM abstraction.
-        
-        Args:
-            user_history: Raw formatted user history from loader
-            
-        Returns:
-            Formatted persona string for History-Only condition
         """
+        if not user_history or not user_history.strip():
+            raise ValueError("Cannot format empty user history")
+        
         # Clean and format the raw history - NO LLM PROCESSING
         formatted_persona = f"""User Profile based on posting history:
 
@@ -187,173 +174,146 @@ This user's authentic communication patterns are evidenced by their actual socia
         
         return formatted_persona
     
-    def extract_best_persona(self, user_file_path: str, fallback_persona: str = None) -> str:
+    def extract_best_persona(self, user_file_path: str) -> str:
         """
         Extract best-performing persona from iterative self-prompting rounds.
         
         Tests the hypothesis: Does iterative optimization improve persona quality?
         
-        Args:
-            user_file_path: Path to user JSONL file  
-            fallback_persona: Fallback persona if no iterative rounds found
-            
-        Returns:
-            Best optimized persona or fallback
+        NO FALLBACKS: Must find and extract best persona or fail.
         """
+        if not os.path.exists(user_file_path):
+            raise FileNotFoundError(f"User file does not exist: {user_file_path}")
+        
         logger.info(f"Extracting Best-Persona for {os.path.basename(user_file_path)}")
         
-        try:
-            # Find best performing round
-            best_run_id = self.identify_best_round(user_file_path)
-            
-            if best_run_id:
-                # Extract improved persona from reflections
-                improved_persona = self.load_persona_from_reflections(user_file_path, best_run_id)
-                
-                if improved_persona and len(improved_persona) > 50:
-                    logger.info(f"Found best persona from round: {best_run_id}")
-                    return improved_persona
-            
-            # Fallback: Use provided fallback or create initial persona
-            if fallback_persona:
-                logger.info("Using provided fallback persona for Best-Persona condition")
-                return fallback_persona
-            else:
-                logger.info("Creating initial persona as fallback for Best-Persona condition")
-                return self.create_initial_persona(user_file_path)
-                
-        except Exception as e:
-            logger.error(f"Error extracting Best-Persona: {e}")
-            return fallback_persona or "Error: Could not extract best persona."
-    
-    def identify_best_round(self, user_file_path: str) -> Optional[str]:
-        """
-        Identify the best performing round based on evaluation metrics.
+        # Find best performing round
+        best_run_id = self.identify_best_round(user_file_path)
         
+        if not best_run_id:
+            raise ValueError(f"No evaluations found in {user_file_path} - cannot extract best persona")
+        
+        # Extract improved persona from reflections
+        improved_persona = self.load_persona_from_reflections(user_file_path, best_run_id)
+        
+        if not improved_persona:
+            raise ValueError(f"No improved persona found for best round {best_run_id}")
+        
+        logger.info(f"Found best persona from round: {best_run_id}")
+        return improved_persona
+    
+    def identify_best_round(self, user_file_path: str) -> str:
+        """
+        Identify the best performing round based on BERTScore F1 from run_r50_all_metrics.
         Args:
             user_file_path: Path to user JSONL file
-            
         Returns:
-            Best run_id or None if no evaluations found
+            Best run_id
+        Raises:
+            ValueError: If no suitable evaluations found or no valid BERTScore F1 scores
+            FileNotFoundError: If evaluation data is missing
         """
         try:
             # Load file data using cache
             cached_data = self.cache.read_file_with_cache(user_file_path)
             if not cached_data or 3 not in cached_data:
-                logger.warning(f"No evaluation data found in {user_file_path}")
-                return None
+                raise FileNotFoundError(f"No evaluation data found in {user_file_path}")
             
             # Get evaluations (line 4, index 3)
             evaluations_data = cached_data[3]
             evaluations = evaluations_data.get('evaluations', [])
             
             if not evaluations:
-                logger.warning(f"No evaluations found in {user_file_path}")
-                return None
+                raise ValueError(f"No evaluations found in {user_file_path}")
             
-            # Find best performing evaluation based on combined score
+            # DEBUG: Print all run_ids to see what patterns exist
+            logger.info(f"DEBUG: All run_ids in {os.path.basename(user_file_path)}:")
+            for eval in evaluations:
+                run_id = eval.get('run_id', 'NO_ID')
+                overall = eval.get('evaluation_results', {}).get('overall', {})
+                has_bertscore = 'bertscore' in overall
+                logger.info(f"  {run_id}: has_bertscore={has_bertscore}")
+            
+            # Filter evaluations: only original run_r50_* rounds (which have reflections)
+            valid_evaluations = []
+            for eval in evaluations:
+                run_id = eval.get('run_id', '')
+                
+                # Only include run_r50_*_round_* pattern
+                if not ('run_r50_' in run_id and '_round_' in run_id):
+                    continue
+                    
+                # Skip baseline runs explicitly 
+                if 'baseline_' in run_id:
+                    continue
+                    
+                overall = eval.get('evaluation_results', {}).get('overall', {})
+                if 'bertscore' in overall:
+                    bertscore_data = overall['bertscore']
+                    if isinstance(bertscore_data, dict) and 'f1' in bertscore_data:
+                        valid_evaluations.append(eval)
+            
+            logger.info(f"DEBUG: Found {len(valid_evaluations)} valid evaluations after filtering")
+
+            filtered_evaluations = valid_evaluations
+            
+            if not filtered_evaluations:
+                raise ValueError(f"No evaluations with valid BERTScore found in {user_file_path}")
+            
+            # Find best performing evaluation based on BERTScore F1
             best_evaluation = None
-            best_combined_score = -1
+            best_bertscore_f1 = -1
             
-            for evaluation in evaluations:
+            for evaluation in filtered_evaluations:
                 eval_results = evaluation.get('evaluation_results', {})
                 overall_scores = eval_results.get('overall', {})
                 
-                # Calculate combined score (same logic as eval.py)
-                rouge_scores = overall_scores.get('rouge', {})
-                bleu_scores = overall_scores.get('bleu', {})
+                # Extract BERTScore F1
+                bertscore_data = overall_scores.get('bertscore', {})
+                bertscore_f1 = bertscore_data.get('f1', 0) if isinstance(bertscore_data, dict) else 0
                 
-                rouge1 = rouge_scores.get('rouge1', 0) if isinstance(rouge_scores, dict) else 0
-                rouge2 = rouge_scores.get('rouge2', 0) if isinstance(rouge_scores, dict) else 0
-                rougeL = rouge_scores.get('rougeL', 0) if isinstance(rouge_scores, dict) else 0
-                bleu = bleu_scores.get('bleu', 0) if isinstance(bleu_scores, dict) else bleu_scores if isinstance(bleu_scores, (int, float)) else 0
-                
-                combined_score = (rouge1 + rouge2 + rougeL + bleu) / 4.0
-                
-                if combined_score > best_combined_score:
-                    best_combined_score = combined_score
+                if bertscore_f1 > best_bertscore_f1:
+                    best_bertscore_f1 = bertscore_f1
                     best_evaluation = evaluation
             
-            if best_evaluation:
+            if best_evaluation and best_bertscore_f1 > 0:
                 best_run_id = best_evaluation.get('run_id')
-                logger.info(f"Best performing round: {best_run_id} (score: {best_combined_score:.4f})")
+                logger.info(f"Best performing round: {best_run_id} (BERTScore F1: {best_bertscore_f1:.4f})")
                 return best_run_id
             
-            return None
+            # No valid scores found
+            raise ValueError(f"No valid BERTScore F1 scores found in evaluations for {user_file_path}")
+
             
+        except (FileNotFoundError, ValueError):
+            # Re-raise specific errors
+            raise
         except Exception as e:
-            logger.error(f"Error identifying best round: {e}")
-            return None
+            # Wrap unexpected errors
+            raise RuntimeError(f"Error identifying best round in {user_file_path}: {e}")
     
-    def load_persona_from_reflections(self, user_file_path: str, run_id: str) -> Optional[str]:
+    def load_persona_from_reflections(self, user_file_path: str, run_id: str) -> str:
         """
         Load improved persona from reflection data.
         
-        Args:
-            user_file_path: Path to user JSONL file
-            run_id: Run ID to load persona for
-            
-        Returns:
-            Improved persona string or None
+        NO FALLBACKS: Must find persona or raise exception.
         """
-        try:
-            # Use existing loader function
-            from loader import load_latest_improved_persona
-            
-            improved_persona = load_latest_improved_persona(run_id, user_file_path)
-            
-            if improved_persona:
-                logger.debug(f"Loaded improved persona for {run_id}: {len(improved_persona)} characters")
-                return improved_persona
-            else:
-                logger.warning(f"No improved persona found for {run_id}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error loading persona from reflections: {e}")
-            return None
-    
-    def create_initial_persona(self, user_file_path: str) -> str:
-        """
-        Create initial persona using LLM (same as main experiment).
+        # Use existing loader function
+        from loader import load_latest_improved_persona
         
-        Args:
-            user_file_path: Path to user JSONL file
-            
-        Returns:
-            Initial persona string
-        """
-        try:
-            # Use same logic as main.py for initial persona creation
-            user_history = get_formatted_user_historie(user_file_path)
-            
-            # Use existing template
-            formatted_user_history = templates.format_template(
-                'persona_template_simple',
-                historie=user_history
-            )
-            
-            # Call LLM (use Google model as in main experiment)
-            initial_persona = call_ai(formatted_user_history, 'google')
-            
-            logger.info(f"Created initial persona as fallback: {len(initial_persona)} characters")
-            return initial_persona
-            
-        except Exception as e:
-            logger.error(f"Error creating initial persona: {e}")
-            return "Generic social media user with varied interests and communication style."
+        improved_persona = load_latest_improved_persona(run_id, user_file_path)
+        
+        if not improved_persona:
+            raise ValueError(f"No improved persona found for {run_id} in {user_file_path}")
+        
+        logger.debug(f"Loaded improved persona for {run_id}: {len(improved_persona)} characters")
+        return improved_persona
     
     def _get_condition_persona(self, condition_type: str, user_file_path: str, condition_info: dict) -> Optional[str]:
         """
         Get persona for specific condition, handling dynamic persona generation.
         
-        Args:
-            condition_type: Type of baseline condition
-            user_file_path: Path to user file
-            condition_info: Condition configuration
-            
-        Returns:
-            Persona string or None for no_persona condition
+        NO FALLBACKS: Must succeed for all dynamic conditions or fail.
         """
         if condition_type == "no_persona":
             return None
@@ -362,12 +322,9 @@ This user's authentic communication patterns are evidenced by their actual socia
         elif condition_type == "history_only":
             return self.create_history_only_persona(user_file_path)
         elif condition_type == "best_persona":
-            # Try to extract best persona, fallback to initial if needed
-            initial_fallback = self.create_initial_persona(user_file_path)
-            return self.extract_best_persona(user_file_path, initial_fallback)
+            return self.extract_best_persona(user_file_path)
         else:
-            logger.error(f"Unknown condition type: {condition_type}")
-            return None
+            raise ValueError(f"Unknown condition type: {condition_type}")
     
     def process_baseline_condition(
         self, 
@@ -380,18 +337,17 @@ This user's authentic communication patterns are evidenced by their actual socia
         """
         Process a single baseline condition for one user.
         
-        Updated for V2: Supports all 4 baseline conditions with dynamic persona generation.
-        
-        Args:
-            user_file_path: Path to user JSONL file
-            condition_type: 'no_persona', 'generic_persona', 'history_only', or 'best_persona'
-            stimuli_items: List of (stimulus, is_post, post_id) tuples
-            config: Experiment configuration
-            run_id: Unique run identifier
-            
-        Returns:
-            True if successful, False otherwise
+        NO FALLBACKS: All processing must succeed or fail immediately.
         """
+        if not os.path.exists(user_file_path):
+            raise FileNotFoundError(f"User file does not exist: {user_file_path}")
+        
+        if condition_type not in self.baseline_conditions:
+            raise ValueError(f"Unknown condition type: {condition_type}")
+        
+        if not stimuli_items:
+            raise ValueError(f"No stimuli items provided for {condition_type}")
+        
         user_file = os.path.basename(user_file_path)
         condition_info = self.baseline_conditions[condition_type]
         
@@ -400,18 +356,17 @@ This user's authentic communication patterns are evidenced by their actual socia
         
         # Get LLM configuration
         llm_config = config.get('llm', {})
+        if not llm_config:
+            raise ValueError("No LLM configuration found in config")
         
         # Get persona for this condition (dynamic for new conditions)
         persona = self._get_condition_persona(condition_type, user_file_path, condition_info)
-        
-        if persona is None and condition_type != "no_persona":
-            logger.error(f"Failed to create persona for {condition_type}")
-            return False
         
         logger.info(f"Persona for {condition_type}: {len(persona) if persona else 0} characters")
         
         # Process stimuli in parallel (using existing infrastructure)
         successful_count = 0
+        failed_stimuli = []
         
         # Use ThreadPoolExecutor for parallel processing (same as main.py)
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
@@ -440,20 +395,26 @@ This user's authentic communication patterns are evidenced by their actual socia
                         successful_count += 1
                         logger.debug(f"Successfully processed {condition_type} stimulus {post_id}")
                     else:
-                        logger.warning(f"Failed to process {condition_type} stimulus {post_id}")
+                        failed_stimuli.append(post_id)
+                        logger.error(f"Failed to process {condition_type} stimulus {post_id}")
                 except Exception as exc:
+                    failed_stimuli.append(post_id)
                     logger.error(f"Stimulus {post_id} generated exception: {exc}")
+        
+        # Check if we have enough successful processing
+        if successful_count == 0:
+            raise RuntimeError(f"No stimuli successfully processed for {condition_type}")
+        
+        if len(failed_stimuli) > len(stimuli_items) * 0.5:  # More than 50% failed
+            raise RuntimeError(f"Too many failures for {condition_type}: {len(failed_stimuli)}/{len(stimuli_items)} failed")
         
         logger.info(f"Completed {condition_type}: {successful_count}/{len(stimuli_items)} stimuli processed")
         
         # Run evaluation for this condition
-        try:
-            self._evaluate_baseline_condition(user_file_path, run_id)
-            logger.info(f"Evaluation completed for {condition_type}")
-            return True
-        except Exception as e:
-            logger.error(f"Evaluation failed for {condition_type}: {e}")
-            return False
+        self._evaluate_baseline_condition(user_file_path, run_id)
+        logger.info(f"Evaluation completed for {condition_type}")
+        
+        return True
     
     def _process_single_baseline_stimulus(
         self,
@@ -467,25 +428,27 @@ This user's authentic communication patterns are evidenced by their actual socia
         """
         Process a single stimulus for baseline condition.
         
-        Updated for V2: Handles all 4 baseline conditions with appropriate template selection.
+        NO FALLBACKS: Must complete successfully or raise exception.
         """
         stimulus, is_post, post_id = stimulus_data
         condition_info = self.baseline_conditions[condition_type]
         llm_config = config.get('llm', {})
         
-        try:
-            # Select appropriate template based on task type and condition
-            if is_post:
-                template_name = condition_info['post_template']
-            else:
-                template_name = condition_info['reply_template']
-            
-            # Format stimulus based on condition type
-            if condition_type == "no_persona":
-                # Create no-persona template dynamically if needed
-                if template_name == "imitation_post_template_no_persona":
-                    # No-persona template without any persona reference
-                    stimulus_formatted = f"""You are completing a social media post. Fill in the [MASKED] words in the tweet below to complete it naturally.
+        if not stimulus or not post_id:
+            raise ValueError(f"Invalid stimulus data: {stimulus_data}")
+        
+        # Select appropriate template based on task type and condition
+        if is_post:
+            template_name = condition_info['post_template']
+        else:
+            template_name = condition_info['reply_template']
+        
+        # Format stimulus based on condition type
+        if condition_type == "no_persona":
+            # Create no-persona template dynamically if needed
+            if template_name == "imitation_post_template_no_persona":
+                # No-persona template without any persona reference
+                stimulus_formatted = f"""You are completing a social media post. Fill in the [MASKED] words in the tweet below to complete it naturally.
 
 Original Tweet: {stimulus}
 
@@ -496,8 +459,8 @@ Instructions:
 - Keep the tone consistent
 
 Completed Tweet:"""
-                elif template_name == "imitation_replies_template_no_persona":
-                    stimulus_formatted = f"""You are responding to a social media post. Write a natural reply to the tweet below.
+            elif template_name == "imitation_replies_template_no_persona":
+                stimulus_formatted = f"""You are responding to a social media post. Write a natural reply to the tweet below.
 
 Tweet to reply to: {stimulus}
 
@@ -507,112 +470,110 @@ Instructions:
 - Write authentically and conversationally
 
 Reply:"""
-                else:
-                    # Fallback: use template without persona
-                    stimulus_formatted = templates.format_template(
-                        "imitation_post_template_simple" if is_post else "imitation_replies_template_simple",
-                        persona="",
-                        tweet=stimulus
-                    )
             else:
-                # All other conditions use persona (generic, history_only, best_persona)
-                stimulus_formatted = templates.format_template(
-                    template_name,
-                    persona=persona,
-                    tweet=stimulus
-                )
+                raise ValueError(f"Unknown no-persona template: {template_name}")
+        else:
+            # All other conditions use persona (generic, history_only, best_persona)
+            if not persona:
+                raise ValueError(f"Persona required for condition {condition_type} but none provided")
             
-            # Call AI model
-            imitation_model = llm_config.get('imitation_model', 'ollama')
-            imitation = call_ai(stimulus_formatted, imitation_model)
-            
-            logger.debug(f"Generated {condition_type} imitation for {post_id}: {imitation[:100]}...")
-            
-            # Save results with thread safety
-            with self.file_lock:
-                save_user_imitation(
-                    file_path=user_file_path,
-                    stimulus=stimulus,
-                    persona=persona or f"[{condition_type.upper()}]",  # Use condition marker if no persona
-                    imitation=imitation,
-                    run_id=run_id,
-                    tweet_id=post_id
-                )
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error processing {condition_type} stimulus {post_id}: {e}")
-            return False
+            stimulus_formatted = templates.format_template(
+                template_name,
+                persona=persona,
+                tweet=stimulus
+            )
+        
+        # Call AI model
+        imitation_model = llm_config.get('imitation_model')
+        if not imitation_model:
+            raise ValueError("No imitation_model specified in LLM config")
+        
+        imitation = call_ai(stimulus_formatted, imitation_model)
+        
+        if not imitation or not imitation.strip():
+            raise ValueError(f"Empty imitation generated for {condition_type} stimulus {post_id}")
+        
+        logger.debug(f"Generated {condition_type} imitation for {post_id}: {imitation[:100]}...")
+        
+        # Save results with thread safety
+        with self.file_lock:
+            save_user_imitation(
+                file_path=user_file_path,
+                stimulus=stimulus,
+                persona=persona or f"[{condition_type.upper()}]",  # Use condition marker if no persona
+                imitation=imitation,
+                run_id=run_id,
+                tweet_id=post_id
+            )
+        
+        return True
     
     def _evaluate_baseline_condition(self, user_file_path: str, run_id: str) -> None:
         """
         Evaluate baseline condition using existing evaluation infrastructure.
+        
+        NO FALLBACKS: Must complete evaluation or raise exception.
         """
         from loader import load_predictions_orginales_formated
         
-        try:
-            # Load predictions and originals (reuse existing loader)
-            results = load_predictions_orginales_formated(run_id=run_id, file_path=user_file_path)
-            
-            if not results:
-                logger.warning(f"No results found for evaluation of run_id {run_id}")
-                return
-            
-            # Evaluate using existing evaluation function
-            evaluation_result = evaluate_with_individual_scores(results)
-            
-            # Save evaluation results
-            save_evaluation_results(
-                file_path=user_file_path, 
-                evaluation_results=evaluation_result, 
-                run_id=run_id
-            )
-            
-            logger.debug(f"Evaluation completed for run_id {run_id}")
-            
-        except Exception as e:
-            logger.error(f"Error in evaluation for {run_id}: {e}")
-            raise
+        # Load predictions and originals (reuse existing loader)
+        results = load_predictions_orginales_formated(run_id=run_id, file_path=user_file_path)
+        
+        if not results:
+            raise ValueError(f"No results found for evaluation of run_id {run_id}")
+        
+        # Evaluate using existing evaluation function
+        evaluation_result = evaluate_with_individual_scores(results)
+        
+        if not evaluation_result:
+            raise ValueError(f"Evaluation failed for run_id {run_id}")
+        
+        # Save evaluation results
+        save_evaluation_results(
+            file_path=user_file_path, 
+            evaluation_results=evaluation_result, 
+            run_id=run_id
+        )
+        
+        logger.debug(f"Evaluation completed for run_id {run_id}")
     
     def run_baseline_experiment(self, config: Dict[str, Any], extended_mode: bool = True) -> Dict[str, Any]:
         """
         Run complete baseline experiment across all users.
         
-        Updated for V2: Supports both 2-condition and 4-condition modes.
+        NO FALLBACKS: All users must complete successfully or experiment fails.
         Uses IDENTICAL STIMULI for all conditions (optimal scientific design).
-        
-        Args:
-            config: Experiment configuration dict
-            extended_mode: If True, run 4-condition experiment (V2)
-            
-        Returns:
-            Dictionary with experiment results and statistics
         """
         mode_desc = "4-condition (V2)" if extended_mode else "2-condition (V1)"
         logger.info(f"Starting BASELINE EXPERIMENT - {mode_desc} with IDENTICAL STIMULI")
         
         # Extract configuration
-        experiment_config = config.get('experiment', {})
-        number_of_users = experiment_config.get('number_of_users')
-        users_dict_path = experiment_config.get('users_dict')
-        run_name_prefix = experiment_config.get('run_name_prefix', 'baseline')
-        num_stimuli = experiment_config.get('num_stimuli_to_process', 50)
+        experiment_config = config.get('experiment')
+        if not experiment_config:
+            raise ValueError("No experiment configuration found in config")
         
+        users_dict_path = experiment_config.get('users_dict')
         if not users_dict_path or not os.path.exists(users_dict_path):
-            logger.error(f"Invalid users_dict path: {users_dict_path}")
-            return {"error": "Invalid data path"}
+            raise FileNotFoundError(f"Invalid users_dict path: {users_dict_path}")
+        
+        number_of_users = experiment_config.get('number_of_users')
+        run_name_prefix = experiment_config.get('run_name_prefix')
+        if not run_name_prefix:
+            raise ValueError("No run_name_prefix specified in config")
+        
+        num_stimuli = experiment_config.get('num_stimuli_to_process')
+        if not num_stimuli or num_stimuli <= 0:
+            raise ValueError("Invalid num_stimuli_to_process in config")
         
         # Get user files
         user_files = [f for f in os.listdir(users_dict_path) 
                      if f.endswith('.jsonl')]
         
+        if not user_files:
+            raise FileNotFoundError("No user files found in users_dict path")
+        
         if number_of_users:
             user_files = user_files[:number_of_users]
-        
-        if not user_files:
-            logger.error("No user files found")
-            return {"error": "No user files found"}
         
         logger.info(f"Found {len(user_files)} user files for baseline experiment")
         
@@ -648,13 +609,29 @@ Reply:"""
             "extended_mode": extended_mode,
             "stimuli_per_condition": num_stimuli
         }
-        
+
         for user_file in user_files:
             user_file_path = os.path.join(users_dict_path, user_file)
             user_id = user_file.replace('.jsonl', '')
             
+            logger.info(f"Processing baseline experiment for user: {user_id}")
+            
             try:
-                logger.info(f"Processing baseline experiment for user: {user_id}")
+                # Pre-validate: Check if all conditions can be generated for this user
+                # This prevents partial processing and wasted computation
+                logger.info(f"Pre-validating conditions for {user_id}...")
+                
+                for condition_type in run_ids.keys():
+                    condition_info = self.baseline_conditions[condition_type]
+                    
+                    # Test persona generation without actually using it
+                    try:
+                        test_persona = self._get_condition_persona(condition_type, user_file_path, condition_info)
+                        logger.debug(f"✓ {condition_type} persona validated for {user_id}")
+                    except Exception as e:
+                        raise ValueError(f"Cannot generate {condition_type} condition for {user_id}: {e}")
+                
+                logger.info(f"✓ All conditions validated for {user_id}")
                 
                 # Create IDENTICAL stimuli split for this user
                 split_data = self.create_identical_stimuli_splits(
@@ -668,9 +645,7 @@ Reply:"""
                 missing_conditions = [cond for cond in expected_conditions if not split_data.get(cond)]
                 
                 if missing_conditions:
-                    logger.warning(f"Missing conditions for {user_id}: {missing_conditions}")
-                    results["failed_users"].append(user_id)
-                    continue
+                    raise ValueError(f"Missing conditions for {user_id}: {missing_conditions}")
                 
                 # Validate identical stimuli
                 first_condition = expected_conditions[0]
@@ -679,237 +654,168 @@ Reply:"""
                 for condition in expected_conditions[1:]:
                     condition_stimuli_ids = [item[2] for item in split_data[condition]]
                     if first_stimuli_ids != condition_stimuli_ids:
-                        logger.error(f"CRITICAL: Non-identical stimuli for {user_id}")
-                        results["failed_users"].append(user_id)
-                        break
-                else:
-                    # All conditions have identical stimuli - proceed with processing
-                    logger.info(f"✅ Verified IDENTICAL stimuli for {user_id}: {len(first_stimuli_ids)} items")
+                        raise ValueError(f"CRITICAL: Non-identical stimuli for {user_id}")
+                
+                # All conditions have identical stimuli - proceed with processing
+                logger.info(f"✓ Verified IDENTICAL stimuli for {user_id}: {len(first_stimuli_ids)} items")
+                
+                # Process all baseline conditions (now we know all will succeed)
+                for condition_type, stimuli_items in split_data.items():
+                    if condition_type not in run_ids:
+                        continue  # Skip unexpected conditions
                     
-                    # Process all baseline conditions
-                    success_count = 0
+                    condition_run_id = run_ids[condition_type]
                     
-                    for condition_type, stimuli_items in split_data.items():
-                        if condition_type not in run_ids:
-                            continue  # Skip unexpected conditions
-                        
-                        condition_run_id = run_ids[condition_type]
-                        
-                        logger.info(f"Processing {condition_type} for {user_id} ({len(stimuli_items)} stimuli)")
-                        
-                        success = self.process_baseline_condition(
-                            user_file_path=user_file_path,
-                            condition_type=condition_type,
-                            stimuli_items=stimuli_items,
-                            config=config,
-                            run_id=condition_run_id
-                        )
-                        
-                        if success:
-                            success_count += 1
-                            logger.info(f"✅ Successfully completed {condition_type} for {user_id}")
-                        else:
-                            logger.error(f"❌ Failed {condition_type} for {user_id}")
+                    logger.info(f"Processing {condition_type} for {user_id} ({len(stimuli_items)} stimuli)")
                     
-                    # Record user as processed if most conditions succeeded
-                    min_success = max(1, len(run_ids) // 2)  # At least half should succeed
-                    if success_count >= min_success:
-                        results["processed_users"].append(user_id)
-                        logger.info(f"✅ User {user_id} completed: {success_count}/{len(run_ids)} conditions successful")
-                    else:
-                        results["failed_users"].append(user_id)
-                        logger.error(f"❌ User {user_id} failed: only {success_count}/{len(run_ids)} conditions successful")
+                    # NO FALLBACKS - must succeed or fail (but we pre-validated)
+                    self.process_baseline_condition(
+                        user_file_path=user_file_path,
+                        condition_type=condition_type,
+                        stimuli_items=stimuli_items,
+                        config=config,
+                        run_id=condition_run_id
+                    )
                     
+                    logger.info(f"✓ Successfully completed {condition_type} for {user_id}")
+                
+                # Record user as processed (all conditions succeeded)
+                results["processed_users"].append(user_id)
+                logger.info(f"✓ User {user_id} completed: {len(run_ids)}/{len(run_ids)} conditions successful")
+                
             except Exception as e:
-                logger.error(f"Error processing user {user_id}: {e}")
-                results["failed_users"].append(user_id)
-        
+                # User failed - skip and continue with next user
+                results["failed_users"].append({"user_id": user_id, "error": str(e)})
+                logger.warning(f"✗ Skipping user {user_id}: {e}")
+                continue
+
         # Log final results
         logger.info(f"🎯 BASELINE EXPERIMENT COMPLETED ({mode_desc}):")
-        logger.info(f"  ✅ Successful users: {len(results['processed_users'])}")
-        logger.info(f"  ❌ Failed users: {len(results['failed_users'])}")
+        logger.info(f"  ✓ Successful users: {len(results['processed_users'])}")
+        logger.info(f"  ✗ Failed users: {len(results['failed_users'])}")
+
+        # Show failed user details
+        if results['failed_users']:
+            logger.info(f"  Failed user details:")
+            for failed_user in results['failed_users']:
+                logger.info(f"    - {failed_user['user_id']}: {failed_user['error']}")
+
+        logger.info(f"  📊 Success rate: {len(results['processed_users'])}/{results['total_users']} ({100*len(results['processed_users'])/results['total_users']:.1f}%)")
         logger.info(f"  📊 Total condition-item instances: {len(results['processed_users']) * len(run_ids) * num_stimuli:,}")
         logger.info(f"  🔬 Run IDs: {list(results['run_ids'].values())}")
-        
+
         return results
-
-
-def create_baseline_config(base_config_path: str = "config.yaml") -> Dict[str, Any]:
-    """
-    Create configuration for baseline experiments.
-    
-    Args:
-        base_config_path: Path to base configuration file
-        
-    Returns:
-        Configuration dict optimized for baseline experiments
-    """
-    from utils import load_config
-    
-    try:
-        # Load base configuration
-        base_config = load_config(base_config_path)
-        
-        # Override settings for baseline experiments
-        baseline_config = base_config.copy()
-        
-        # Experiment settings for baseline
-        baseline_config['experiment'].update({
-            'run_name_prefix': 'baseline',
-            'number_of_rounds': 1,  # Baseline doesn't use iterative rounds
-            'num_stimuli_to_process': 50,  # Standard baseline size
-            'use_async': True,
-            'num_workers': 4  # Parallel processing for efficiency
-        })
-        
-        # Use same LLM settings as main experiment for comparability
-        # No changes
-        logger.info("Created baseline experiment configuration")
-        return baseline_config
-        
-    except Exception as e:
-        logger.error(f"Error creating baseline config: {e}")
-        # Return minimal fallback config
-        return {
-            'experiment': {
-                'run_name_prefix': 'baseline',
-                'users_dict': 'data/filtered_users',
-                'number_of_users': 24,
-                'number_of_rounds': 1,
-                'num_stimuli_to_process': 50,
-                'use_async': True,
-                'num_workers': 4
-            },
-            'llm': {
-                'persona_model': 'google',
-                'imitation_model': 'ollama',
-                'reflection_model': 'google_json',
-                'ollama_model': 'gemma3:latest'
-            },
-            'templates': {
-                'persona_template': 'persona_template_simple',
-                'imitation_post_template': 'imitation_post_template_simple',
-                'imitation_reply_template': 'imitation_replies_template_simple'
-            }
-        }
 
 
 def main():
     """
     Main function to run baseline experiments.
     Supports both V1 (2-condition) and V2 (4-condition) modes.
+    NO FALLBACKS: Fails immediately on any error.
     """
     import argparse
     
     parser = argparse.ArgumentParser(description="Run baseline experiments for persona imitation")
-    parser.add_argument('--config', type=str, default='config.yaml',
+    parser.add_argument('--config', type=str, default='baseline_config.yaml',
                        help='Path to configuration file')
     parser.add_argument('--mode', type=str, choices=['v1', 'v2'], default='v2',
                        help='Experiment mode: v1 (2-condition) or v2 (4-condition)')
     parser.add_argument('--users', type=int, 
                        help='Number of users to process (overrides config)')
-    parser.add_argument('--stimuli', type=int, default=50,
+    parser.add_argument('--stimuli', type=int,
                        help='Number of stimuli per condition (default: 50)')
     parser.add_argument('--dry-run', action='store_true',
                        help='Validate setup without running experiment')
     
     args = parser.parse_args()
     
-    try:
-        # Create baseline configuration
-        config = create_baseline_config(args.config)
+    # Load configuration - NO FALLBACKS
+    if not os.path.exists(args.config):
+        raise FileNotFoundError(f"Configuration file not found: {args.config}")
+    
+    with open(args.config, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+    
+    if not config:
+        raise ValueError(f"Empty or invalid configuration file: {args.config}")
+    
+    # Apply command line overrides
+    if args.users:
+        config['experiment']['number_of_users'] = args.users
+    if args.stimuli:
+        config['experiment']['num_stimuli_to_process'] = args.stimuli
+    
+    # Initialize baseline experiment manager
+    baseline_manager = BaselineExperiment(config['experiment']['users_dict'])
+    
+    if args.dry_run:
+        logger.info("🔍 DRY RUN MODE - Validating setup")
         
-        # Apply command line overrides
-        if args.users:
-            config['experiment']['number_of_users'] = args.users
-        if args.stimuli:
-            config['experiment']['num_stimuli_to_process'] = args.stimuli
+        # Validate data directory
+        users_dict_path = config['experiment']['users_dict']
+        if not os.path.exists(users_dict_path):
+            raise FileNotFoundError(f"Data directory not found: {users_dict_path}")
         
-        # Initialize baseline experiment manager
-        baseline_manager = BaselineExperiment(config['experiment']['users_dict'])
+        # Check user files
+        user_files = [f for f in os.listdir(users_dict_path) if f.endswith('.jsonl')]
+        logger.info(f"📁 Found {len(user_files)} user files")
         
-        if args.dry_run:
-            logger.info("🔍 DRY RUN MODE - Validating setup")
-            
-            # Validate data directory
-            users_dict_path = config['experiment']['users_dict']
-            if not os.path.exists(users_dict_path):
-                logger.error(f"❌ Data directory not found: {users_dict_path}")
-                return False
-            
-            # Check user files
-            user_files = [f for f in os.listdir(users_dict_path) if f.endswith('.jsonl')]
-            logger.info(f"📁 Found {len(user_files)} user files")
-            
-            if len(user_files) == 0:
-                logger.error("❌ No user files found")
-                return False
-            
-            # Test stimulus loading for first user
-            test_user_path = os.path.join(users_dict_path, user_files[0])
-            test_stimuli = baseline_manager.create_identical_stimuli_splits(
-                test_user_path, 
-                num_items=args.stimuli
-            )
-            
-            logger.info(f"✅ Test stimulus split successful: {len(test_stimuli)} conditions")
-            
-            # Estimate processing time
-            total_instances = len(user_files) * (4 if args.mode == 'v2' else 2) * args.stimuli
-            estimated_minutes = total_instances / 100  # Rough estimate: 100 instances per minute
-            
-            logger.info(f"📊 Experiment Overview:")
-            logger.info(f"  Mode: {args.mode.upper()} ({'4-condition' if args.mode == 'v2' else '2-condition'})")
-            logger.info(f"  Users: {len(user_files)}")
-            logger.info(f"  Stimuli per condition: {args.stimuli}")
-            logger.info(f"  Total instances: {total_instances:,}")
-            logger.info(f"  Estimated time: {estimated_minutes:.0f} minutes")
-            logger.info("✅ Setup validation completed")
-            
-            return True
+        if len(user_files) == 0:
+            raise FileNotFoundError("No user files found")
         
-        # Run actual experiment
-        extended_mode = (args.mode == 'v2')
+        # Test stimulus loading for first user
+        test_user_path = os.path.join(users_dict_path, user_files[0])
+        test_stimuli = baseline_manager.create_identical_stimuli_splits(
+            test_user_path, 
+            num_items=args.stimuli
+        )
         
-        logger.info(f"🚀 Starting baseline experiment in {args.mode.upper()} mode")
-        start_time = datetime.now()
+        logger.info(f"✅ Test stimulus split successful: {len(test_stimuli)} conditions")
         
-        results = baseline_manager.run_baseline_experiment(config, extended_mode=extended_mode)
+        # Estimate processing time
+        total_instances = len(user_files) * (4 if args.mode == 'v2' else 2) * args.stimuli
+        estimated_minutes = total_instances / 100  # Rough estimate: 100 instances per minute
         
-        end_time = datetime.now()
-        duration = end_time - start_time
-        
-        # Log final results
-        if "error" in results:
-            logger.error(f"❌ Experiment failed: {results['error']}")
-            return False
-        
-        logger.info(f"🎉 BASELINE EXPERIMENT COMPLETED!")
-        logger.info(f"⏱️  Duration: {duration}")
-        logger.info(f"✅ Successful users: {len(results['processed_users'])}")
-        logger.info(f"❌ Failed users: {len(results['failed_users'])}")
-        logger.info(f"📊 Run IDs created: {list(results['run_ids'].values())}")
-        
-        # Calculate total instances processed
-        successful_instances = len(results['processed_users']) * len(results['run_ids']) * results['stimuli_per_condition']
-        logger.info(f"🔢 Total condition-item instances: {successful_instances:,}")
-        
-        # Log next steps
-        logger.info(f"📝 Next steps:")
-        logger.info(f"  1. Run analysis: python baseline_analysis.py --run-ids {' '.join(results['run_ids'].values())}")
-        logger.info(f"  2. Generate report: python baseline_analysis.py --report")
-        logger.info(f"  3. Export data: python baseline_analysis.py --export-csv")
+        logger.info(f"📊 Experiment Overview:")
+        logger.info(f"  Mode: {args.mode.upper()} ({'4-condition' if args.mode == 'v2' else '2-condition'})")
+        logger.info(f"  Users: {len(user_files)}")
+        logger.info(f"  Stimuli per condition: {args.stimuli}")
+        logger.info(f"  Total instances: {total_instances:,}")
+        logger.info(f"  Estimated time: {estimated_minutes:.0f} minutes")
+        logger.info("✅ Setup validation completed")
         
         return True
-        
-    except KeyboardInterrupt:
-        logger.info("⏹️  Experiment interrupted by user")
-        return False
-    except Exception as e:
-        logger.error(f"❌ Experiment failed with error: {e}")
-        return False
+    
+    # Run actual experiment
+    extended_mode = (args.mode == 'v2')
+    
+    logger.info(f"🚀 Starting baseline experiment in {args.mode.upper()} mode")
+    start_time = datetime.now()
+    
+    results = baseline_manager.run_baseline_experiment(config, extended_mode=extended_mode)
+    
+    end_time = datetime.now()
+    duration = end_time - start_time
+    
+    # Log final results
+    logger.info(f"🎉 BASELINE EXPERIMENT COMPLETED!")
+    logger.info(f"⏱️  Duration: {duration}")
+    logger.info(f"✅ Successful users: {len(results['processed_users'])}")
+    logger.info(f"❌ Failed users: {len(results['failed_users'])}")
+    logger.info(f"📊 Run IDs created: {list(results['run_ids'].values())}")
+    
+    # Calculate total instances processed
+    successful_instances = len(results['processed_users']) * len(results['run_ids']) * results['stimuli_per_condition']
+    logger.info(f"🔢 Total condition-item instances: {successful_instances:,}")
+    
+    # Log next steps
+    logger.info(f"📝 Next steps:")
+    logger.info(f"  1. Run analysis: python baseline_analysis.py --run-ids {' '.join(results['run_ids'].values())}")
+    logger.info(f"  2. Generate report: python baseline_analysis.py --report")
+    logger.info(f"  3. Export data: python baseline_analysis.py --export-csv")
+    
+    return True
 
 
 if __name__ == "__main__":
-    success = main()
-    exit(0 if success else 1)
+    main()
