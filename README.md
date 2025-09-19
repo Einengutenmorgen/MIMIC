@@ -14,7 +14,7 @@ Can an iterative, LLM-based optimization approach create improved personas that 
 
 ## Architecture
 
-![MIMIC Pipeline](results/graphics/mimic_pipeline.png)
+![MIMIC Pipeline](docs/mimic_pipeline.jpg)
 
 The framework consists of several key components:
 
@@ -47,7 +47,7 @@ The framework consists of several key components:
 
 The framework demonstrates consistent performance improvements across all tested strategies:
 
-![Performance Improvement](results/graphics/improvement_metrics.png)
+![Performance Improvement](results/Graphics/figure_1_iterative_comparison.png)
 
 **Post Completion Results:**
 - Perplexity strategy: +0.3578 improvement (0.6422 → 1.0000)
@@ -63,7 +63,9 @@ The framework demonstrates consistent performance improvements across all tested
 
 Comparison against four baseline conditions revealed task-specific patterns:
 
-![Baseline Comparison](results/graphics/baseline_results.png)
+![Baseline Comparison reply](results/Graphics/figure_4_reply_metrics.png)
+![Baseline Comparison posts](results/Graphics/figure_2_posts_comparison.png)
+
 
 **Unexpected Findings:**
 - **No-Persona** achieved best performance in post completion tasks
