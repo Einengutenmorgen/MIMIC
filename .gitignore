@@ -1,16 +1,5 @@
 /.env
-/data/raw
-/data/filered_users
-/data
 /venv
 /__pycache__
 *.log
-config.yaml
-metric_analysis_results
-output/
-batch_results/
-outputs_Backup/
-batch_results/
-backups/
-baseline_analysis_v3/
-.DS_Store
+raw/
