@@ -1,251 +1,161 @@
-import os
-import templates
-import loader
-from llm import call_ai
-from datetime import datetime
-from saver import save_user_imitation, save_evaluation_results, save_reflection_results
-from logging_config import logger
-from eval import evaluate, evaluate_with_individual_scores
-from utils import load_config
+# main.py
+
+import argparse
 import random
-import concurrent.futures
-import threading
-import psutil
-import traceback
+import json
+from typing import List, Dict, Any
 
+# Importiere alle unsere Bausteine
+from user_selector import UserSelector
+from persona_creation import PersonaCreationPipeline
+from imitation_pipeline import ImitationPipeline
+from evaluation_pipeline import EvaluationPipeline, BleuMetric, RougeMetric, LlmJudgeMetric
+from persona_improvement import PersonaImprovementPipeline
+from db_loader import DbLoader
+from db_saver import DbSaver
+from llm_handler import LlmHandler
+from masking_pipeline import MaskingPipeline # <-- Wichtiger neuer Import
 
-# Thread lock for file operations to ensure thread safety
-file_lock = threading.Lock()
-
-
-def process_single_stimulus(stimulus_data, persona, config, user_file_path, run_id):
+def parse_arguments():
     """
-    Process a single stimulus in parallel.
-    
-    :param stimulus_data: Tuple of (stimulus, is_post, post_id)
-    :param persona: User persona
-    :param config: Configuration dictionary
-    :param user_file_path: Path to user file
-    :param run_id: Current run ID
-    :return: Success status
+    Definiert und liest Kommandozeilen-Argumente.
     """
-    stimulus, is_post, post_id = stimulus_data
-    template_config = config.get('templates', {})
-    llm_config = config.get('llm', {})
-    
-    try:
-        logger.debug(f"Processing stimulus {post_id}: {stimulus}, is_post: {is_post}")
-        
-        # Format the stimulus template
-        if is_post:
-            stimulus_formatted = templates.format_template(
-                template_config.get('imitation_post_template', 'imitation_post_template_simple'),
-                persona=persona,
-                tweet=stimulus
-            )
-        else:
-            stimulus_formatted = templates.format_template(
-                template_config.get('imitation_reply_template', 'imitation_replies_template_simple'),
-                persona=persona,
-                tweet=stimulus
-            )
-        
-        # Call AI model
-        imitation_model = llm_config.get('imitation_model', 'ollama')
-        imitation = call_ai(stimulus_formatted, imitation_model)
-        logger.debug(f"Imitation for post/reply {post_id}:\n{imitation}")
-        
-        # Save results with thread safety
-        with file_lock:
-            save_user_imitation(
-                file_path=user_file_path,
-                stimulus=stimulus,
-                persona=persona,
-                imitation=imitation,
-                run_id=run_id,
-                tweet_id=post_id
-            )
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error processing stimulus {post_id}: {e}")
-        return False
+    parser = argparse.ArgumentParser(description="MIMIC v.02 Experiment Runner")
+    parser.add_argument("--user_id", type=int, help="Eine spezifische User-ID für das Experiment.")
+    parser.add_argument("--task_type", type=str, default="reply_generation", choices=["reply_generation", "post_completion"], help="Die Art der auszuführenden Aufgabe.")
+    parser.add_argument("--rounds", type=int, default=2, help="Anzahl der Verbesserungs-Runden.")
+    parser.add_argument("--imitations", type=float, default=0.1, help="Anteil (0.0-1.0) oder Anzahl (int) an Imitationen pro Runde.")
+    parser.add_argument("--metrics", nargs='+', default=['bleu', 'rouge'], help="Liste der Metriken (bleu, rouge, llm_judge).")
+    parser.add_argument("--exp_name", type=str, default="MIMIC Experiment", help="Ein Name für das Experiment.")
+    parser.add_argument("--task_type", type=str, default="contextual_reply", 
+                        choices=["style_imitation", "post_completion", "contextual_reply"], 
+                        help="Die Art der auszuführenden Aufgabe.")
+    return parser.parse_args()
 
-
-def process_user(user_file_path, config, run_id):
-    """
-    Führt die Verarbeitung für einen einzelnen Benutzer durch.
-    """
-    process = psutil.Process(os.getpid())
-    user_file = os.path.basename(user_file_path)
-    logger.debug(f"Processing user: {user_file}")
-
-    experiment_config = config.get('experiment', {})
-    llm_config = config.get('llm', {})
-    template_config = config.get('templates', {})
-    num_stimuli_to_process = experiment_config.get('num_stimuli_to_process')
-    number_of_rounds = experiment_config.get('number_of_rounds')
-    try:
-
-
-        # --- Persona Generierung ---
-        logger.info(f"Generating persona for {user_file}...")
-        user_history = loader.get_formatted_user_historie(user_file_path)
-        formatted_user_history = templates.format_template(
-            template_config.get('persona_template', 'persona_template_simple'),
-            historie=user_history
-        )
-        persona_model = llm_config.get('persona_model', 'google')
-        persona = call_ai(formatted_user_history, persona_model)
-        logger.debug(f"Persona for user {user_file.split('.')[0]}:\n{persona}")
-
-        # Mittlere Schleife: Iteration über Runden pro Benutzer
-        for round_num in range(1, number_of_rounds + 1):
-            # Generate unique run_id for each round to track progression
-            round_run_id = f"{run_id}_round_{round_num}"
-            logger.debug(f"Starting round {round_num}/{number_of_rounds} for user {user_file} with run_id: {round_run_id}")
-
-            # --- Imitation Generierung ---
-            logger.info(f"Starting imitation generation for {user_file}...")
-            all_stimuli = loader.load_stimulus(user_file_path)
-
-            # Parallel processing of stimuli using ThreadPoolExecutor
-            stimuli_to_process = all_stimuli[:num_stimuli_to_process]
-            logger.info(f"Processing {len(stimuli_to_process)} stimuli in parallel with up to 4 threads...")
-            
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                # Submit all stimuli for parallel processing
-                future_to_stimulus = {
-                    executor.submit(process_single_stimulus, stimulus_data, persona, config, user_file_path, round_run_id): stimulus_data
-                    for stimulus_data in stimuli_to_process
-                }
-                
-                # Wait for all tasks to complete and handle results
-                successful_count = 0
-                for future in concurrent.futures.as_completed(future_to_stimulus):
-                    stimulus_data = future_to_stimulus[future]
-                    _, _, post_id = stimulus_data
-                    try:
-                        result = future.result()
-                        if result:
-                            successful_count += 1
-                            logger.debug(f"Successfully processed stimulus {post_id}")
-                        else:
-                            logger.warning(f"Failed to process stimulus {post_id}")
-                    except Exception as exc:
-                        logger.error(f"Stimulus {post_id} generated an exception: {exc}")
-                
-                logger.info(f"Completed parallel processing: {successful_count}/{len(stimuli_to_process)} stimuli processed successfully")
-
-            # --- Evaluation ---
-            logger.info(f"Starting evaluation for {user_file}...")
-            results = loader.load_predictions_orginales_formated(run_id=round_run_id, file_path=user_file_path)
-            logger.debug(f"Results for run_id {round_run_id}:")
-            evaluation_result = evaluate_with_individual_scores(results)
-            save_evaluation_results(file_path=user_file_path, evaluation_results=evaluation_result, run_id=round_run_id)
-            logger.debug(f"Evaluation results saved for run_id {round_run_id}: {evaluation_result}")
-
-            # --- Reflection (nur wenn nicht die letzte Runde) ---
-            if round_num < number_of_rounds:
-                logger.info(f"Starting reflection for {user_file}...")
-                data_for_reflection = loader.load_results_for_reflection(round_run_id, user_file_path)
-                reflection_template = templates.format_template(
-                    template_config.get('reflection_template', 'reflect_results_template'),
-                    **data_for_reflection
-                )
-                reflection_model = llm_config.get('reflection_model', 'google_json')
-                improved_persona = call_ai(reflection_template, reflection_model)
-
-                try:
-                    save_reflection_results(
-                        file_path=user_file_path,
-                        run_id=round_run_id,
-                        reflections=improved_persona,
-                        iteration=round_num
-                    )
-                    logger.debug(f"Reflection results saved for run_id {round_run_id}, iteration {round_num}.")
-                except Exception as e:
-                    logger.error(f"Error saving reflection results: {e}")
-
-                # Lade die neueste verbesserte Persona nach der Reflexion
-                persona = loader.load_latest_improved_persona(run_id=round_run_id, file_path=user_file_path)
-                logger.debug("Persona updated with reflection results (if available).")
-            
-            logger.debug(f"Completed round {round_num}/{number_of_rounds} for user {user_file}")
-        
-        logger.info(f"Completed all rounds for user {user_file}")
-        return True
-    except Exception as e:
-        # This will catch any unexpected Python errors within the process
-        error_traceback = traceback.format_exc()
-        logger.error(f"[{user_file}] An unexpected error occurred in process: {e}\n{error_traceback}")
-        return False
-
-
-def run_experiment(config):
-    """
-    Führt das gesamte Experiment basierend auf der geladenen Konfiguration aus.
-    """
-    logger.info("Starting experiment run...")
-
-    # Konfigurationsparameter extrahieren
-    experiment_config = config.get('experiment', {})
-    number_of_users = experiment_config.get('number_of_users')
-    users_dict_path = experiment_config.get('users_dict')
-    run_id = experiment_config.get('run_name_prefix')
-    max_workers = experiment_config.get('max_parallel_users', 4)
-
-    if not users_dict_path:
-        logger.error("Fehler: 'users_dict' nicht in der Konfiguration gefunden.")
-        return
-
-    if not run_id or str(run_id).lower() == 'none':
-        run_id = str(datetime.now().strftime('%Y%m%d_%H%M%S'))
-    
-    if not os.path.exists(users_dict_path):
-        logger.error(f"Path does not exist: {users_dict_path}")
-        return
+def select_user(config_user_id: int) -> int:
+    """Wählt einen Benutzer basierend auf der Konfiguration aus."""
+    if config_user_id:
+        print(f"Verwende vordefinierte User-ID: {config_user_id}")
+        return config_user_id
     else:
-        files = [f for f in os.listdir(users_dict_path) if os.path.isfile(os.path.join(users_dict_path, f))]
-        if len(files) < 1:
-            logger.error(f"Keine dateien im angegebenen directory")
-            return
-        logger.info(f"Found {len(files)} Users in {users_dict_path}")
+        print("Suche nach einem zufälligen qualifizierten Benutzer (min. 10 History, 5 Holdout)...")
+        selector = UserSelector()
+        selected_user_id = selector.get_random_qualified_user(10, 5)
+        if not selected_user_id:
+            raise ValueError("Keine qualifizierten Benutzer für das Experiment gefunden.")
+        print(f"Zufällig ausgewählter Benutzer für das Experiment: {selected_user_id}")
+        return selected_user_id
+
+def get_metrics(metric_names: List[str], llm_handler: LlmHandler) -> List[Any]:
+    metric_map = {'bleu': BleuMetric, 'rouge': RougeMetric, 'llm_judge': lambda: LlmJudgeMetric(llm_handler)}
+    metrics = [metric_map[name]() if name != 'llm_judge' else metric_map[name]() for name in metric_names if name in metric_map]
+    if not metrics: raise ValueError("Keine gültigen Metriken angegeben.")
+    return metrics
+
+def calculate_average_scores(all_evaluations: List[Dict[str, float]]) -> Dict[str, float]:
+    if not all_evaluations: return {}
+    avg_scores = {key: sum(d[key] for d in all_evaluations) / len(all_evaluations) for key in all_evaluations[0]}
+    return avg_scores
+
+def main():
+    args = parse_arguments()
     
-    random.shuffle(files)
+    # --- 1. SETUP ---
+    print("--- 1. INITIALISIERE PIPELINES UND KOMPONENTEN ---")
+    llm_handler = LlmHandler()
+    loader = DbLoader()
+    saver = DbSaver()
+    user_id = select_user(args.user_id)
+    metrics = get_metrics(args.metrics, llm_handler)
     
-    logger.info(f"Starting experiment with up to {max_workers} parallel user processes.")
-    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
-        future_to_user = {
-            executor.submit(process_user, os.path.join(users_dict_path, user_file), config, run_id): user_file
-            for user_file in files[:number_of_users]
-        }
+    persona_pipeline = PersonaCreationPipeline()
+    imitation_pipeline = ImitationPipeline()
+    eval_pipeline = EvaluationPipeline(metrics=metrics)
+    improvement_pipeline = PersonaImprovementPipeline()
+    masking_pipeline = MaskingPipeline() if args.task_type == 'post_completion' else None
 
-        for future in concurrent.futures.as_completed(future_to_user):
-            user_file = future_to_user[future]
-            try:
-                future.result()
-                logger.info(f"Successfully completed processing for user {user_file}.")
-            except Exception as exc:
-                logger.error(f"User {user_file} generated an exception: {exc}")
+    # --- 2. EXPERIMENT STARTEN ---
+    print(f"\n--- 2. STARTE EXPERIMENT '{args.exp_name}' ---")
+    experiment_id = saver.save_experiment(name=args.exp_name, strategy=f"{args.task_type}_iterative")
+    print(f"Experiment in DB gespeichert mit ID: {experiment_id}")
 
-    logger.info("Experiment completed for all users.")
+    # --- 3. DATEN LADEN UND VORBEREITEN ---
+    print(f"\n--- 3. LADE DATEN FÜR BENUTZER {user_id} ---")
+    
+    # ÄNDERUNG: Lade die Daten basierend auf der Aufgabe
+    if args.task_type == 'contextual_reply':
+        stimulus_pool = loader.get_reply_stimuli(user_id, limit=50) # Lade bis zu 50 Antworten mit Kontext
+    else:
+        holdout_tweets = loader.get_tweets_by_user(user_id, is_holdout=True)
+        stimulus_pool = random.sample(holdout_tweets, min(50, len(holdout_tweets))) # Nehmen wir max. 50
 
+    num_imitations = int(len(stimulus_pool) * args.imitations) if 0.0 < args.imitations <= 1.0 else int(args.imitations)
+    if num_imitations == 0: raise ValueError("Anzahl der Imitationen ist 0.")
+    
+    # Wähle die finale Stichprobe für die Runde
+    stimulus_sample = random.sample(stimulus_pool, min(num_imitations, len(stimulus_pool)))
+    
+    # Bedingte Datenvorbereitung für Post Completion
+    if args.task_type == 'post_completion':
+        print("\n--- VORBEREITUNG: MASKIERE STIMULUS-TWEETS ---")
+        stimulus_sample = masking_pipeline.process_batch(stimulus_pool)
+
+    print(f"Es werden {len(stimulus_sample)} Imitationen pro Runde erzeugt.")
+
+    # --- 4. ITERATIVER PROZESS ---
+    current_persona = ""
+    for i in range(args.rounds):
+        round_num = i + 1
+        print(f"\n{'='*20} RUNDE {round_num}/{args.rounds} {'='*20}")
+
+        if round_num == 1:
+            current_persona = persona_pipeline.create_persona_for_user(user_id)
+        else:
+            current_persona = improvement_pipeline.improve_persona(
+                persona_description=current_persona,
+                evaluation_results=avg_round_scores,
+                ground_truth_example=last_ground_truth,
+                imitation_example=last_imitation,
+            )
+        round_id = saver.save_round(experiment_id, user_id, round_num, current_persona)
+        print(f"Runde {round_num} in DB gespeichert mit ID: {round_id}")
+
+        round_evaluations = []
+        for j, stimulus_data in enumerate(stimulus_sample):
+            imitation = imitation_pipeline.generate_imitation(current_persona, stimulus_data, args.task_type)
+            
+            # Ground truth hängt jetzt von 3 Aufgabentypen ab
+            if args.task_type == 'post_completion':
+                original_tweet_id = stimulus_data['original_tweet_id']
+                ground_truth_text = " ".join(stimulus_data['original_words'])
+            elif args.task_type == 'contextual_reply':
+                # Ground Truth ist die ECHTE ANTWORT des Nutzers
+                original_tweet_id = stimulus_data['stimulus_tweet']['tweet_id']
+                ground_truth_text = stimulus_data['stimulus_tweet']['full_text']
+            else: # style_imitation
+                original_tweet_id = stimulus_data['tweet_id']
+                ground_truth_text = stimulus_data['full_text']
+
+            evaluation_scores = eval_pipeline.evaluate(ground_truth_text, imitation)
+            
+            saver.save_imitation_and_evaluation(
+                round_id=round_id,
+                original_tweet_id=original_tweet_id,
+                generated_text=imitation,
+                task_type=args.task_type,
+                evaluation_scores=evaluation_scores
+            )
+            print("Imitation und Evaluation in DB gespeichert.")
+            round_evaluations.append(evaluation_scores)
+            
+            last_ground_truth = ground_truth_text
+            last_imitation = imitation
+            
+        avg_round_scores = calculate_average_scores(round_evaluations)
+        print(f"\n--- DURCHSCHNITTS-SCORES FÜR RUNDE {round_num} ---")
+        print(avg_round_scores)
+
+    print(f"\n{'='*20} EXPERIMENT ABGESCHLOSSEN {'='*20}")
 
 if __name__ == "__main__":
-    logger.info('Starting...')
-    starttime = datetime.now()
-    import argparse
-    parser = argparse.ArgumentParser(description="Run experiment with YAML configuration.")
-    parser.add_argument('--config', type=str, default='config.yaml',
-                        help='Path to the YAML configuration file.')
-    args = parser.parse_args()
-
-    # Konfiguration laden
-    experiment_config = load_config(args.config)
-
-    # Experiment ausführen
-    run_experiment(experiment_config)
-    endtime = datetime.now()
-    logger.info(f"Experiment completed in {endtime - starttime}.")
+    main()
