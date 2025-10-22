@@ -1,0 +1,14 @@
+# config.yaml
+models:
+  persona_creation: gpt-5       # Model for creating the initial persona
+  imitation: gpt-5-mini         # Model for generating imitations
+  evaluation_judge: gemini-2.5-flash # Model for LLM-as-a-Judge metric
+  persona_improvement: gpt-5    # Model for improving the persona
+
+# Add other configurations if needed, e.g., database config
+database:
+  user: christophhau
+  password: ""
+  host: localhost
+  port: "5432"
+  dbname: mimic_v2
