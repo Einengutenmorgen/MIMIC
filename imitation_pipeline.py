@@ -6,9 +6,10 @@ from llm_handler import LlmHandler
 from typing import Dict, Any
 
 class ImitationPipeline:
-    def __init__(self):
+    def __init__(self, llm_handler: LlmHandler):
+        
         self.formatter = PromptFormatter()
-        self.llm_handler = LlmHandler()
+        self.llm_handler = llm_handler 
         self.prompt_templates = self._load_prompt_templates()
 
     def _load_prompt_templates(self) -> Dict[str, str]:

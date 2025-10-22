@@ -4,6 +4,7 @@ import argparse
 import random
 import json
 from typing import List, Dict, Any
+import yaml
 
 # Importiere alle unsere Bausteine
 from user_selector import UserSelector
@@ -46,8 +47,8 @@ def select_user(config_user_id: int) -> int:
         print(f"Zufällig ausgewählter Benutzer für das Experiment: {selected_user_id}")
         return selected_user_id
 
-def get_metrics(metric_names: List[str], llm_handler: LlmHandler) -> List[Any]:
-    metric_map = {'bleu': BleuMetric, 'rouge': RougeMetric, 'llm_judge': lambda: LlmJudgeMetric(llm_handler)}
+def get_metrics(metric_names: List[str], eval_llm_handler: LlmHandler) -> List[Any]:
+    metric_map = {'bleu': BleuMetric, 'rouge': RougeMetric, 'llm_judge': lambda: LlmJudgeMetric(eval_llm_handler)}
     metrics = [metric_map[name]() if name != 'llm_judge' else metric_map[name]() for name in metric_names if name in metric_map]
     if not metrics: raise ValueError("Keine gültigen Metriken angegeben.")
     return metrics
@@ -59,19 +60,43 @@ def calculate_average_scores(all_evaluations: List[Dict[str, float]]) -> Dict[st
 
 def main():
     args = parse_arguments()
+
+    # ---LOAD CONFIGURATION ---
+    print("--- 1. LADE KONFIGURATION ---")
+    try:
+        with open('config.yaml', 'r') as f:
+            config = yaml.safe_load(f)
+        model_config = config['models']
+        print(f"Modell-Konfiguration geladen: {model_config}")
+    except FileNotFoundError:
+        print("Fehler: config.yaml nicht gefunden.")
+        return
+    except KeyError:
+        print("Fehler: 'models' Sektion in config.yaml nicht gefunden.")
+        return
+
+    # --- 2. SETUP ---
+    print("\n--- 2. INITIALISIERE PIPELINES UND KOMPONENTEN ---")
+    # Create specific LLM Handlers based on config
+    try:
+        persona_creation_handler = LlmHandler(model_name=model_config['persona_creation'])
+        imitation_handler = LlmHandler(model_name=model_config['imitation'])
+        evaluation_handler = LlmHandler(model_name=model_config['evaluation_judge'])
+        improvement_handler = LlmHandler(model_name=model_config['persona_improvement'])
+    except ValueError as e:
+        print(f"Fehler bei der LlmHandler-Initialisierung: {e}")
+        return
     
-    # --- 1. SETUP ---
-    print("--- 1. INITIALISIERE PIPELINES UND KOMPONENTEN ---")
-    llm_handler = LlmHandler()
+    
     loader = DbLoader()
     saver = DbSaver()
     user_id = select_user(args.user_id)
-    metrics = get_metrics(args.metrics, llm_handler)
+    metrics = get_metrics(args.metrics, evaluation_handler)
     
-    persona_pipeline = PersonaCreationPipeline()
-    imitation_pipeline = ImitationPipeline()
+    persona_pipeline = PersonaCreationPipeline(llm_handler=persona_creation_handler)
+    imitation_pipeline = ImitationPipeline(llm_handler=imitation_handler)
     eval_pipeline = EvaluationPipeline(metrics=metrics)
-    improvement_pipeline = PersonaImprovementPipeline()
+    improvement_pipeline = PersonaImprovementPipeline(llm_handler=improvement_handler)
     masking_pipeline = MaskingPipeline() if args.task_type == 'post_completion' else None
 
     # --- 2. EXPERIMENT STARTEN ---
